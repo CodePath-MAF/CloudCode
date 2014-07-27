@@ -204,8 +204,8 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
             if (dateTotal > maxValue) {
                 maxValue = dateTotal;
             }
-            data.push(dateItems);
-            xLabels.push(date.toDateString());
+            data.unshift(dateItems);
+            xLabels.unshift(date.toDateString());
         }
         response.success({
             maxValue: maxValue,
