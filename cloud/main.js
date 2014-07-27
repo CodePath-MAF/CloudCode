@@ -35,6 +35,14 @@ Parse.Cloud.beforeSave("Goal", function(request, response) {
         var paymentAmount = goal.get('amount') / numPayments;
         console.log('today: ' + today + ' daysInBetween: ' + daysInBetween + ' numPayments: ' + numPayments + ' paymentAmount' + paymentAmount);
 
+        if (numPayments < 1) {
+            // Date selected is shorter than a successful first payment base on
+            // the payment interval
+            // TODO: improve error message
+            response.error("Date selected shorter than initial payment interval");
+            return;
+        }
+
         goal.set("numPayments", numPayments);
         goal.set("paymentAmount", paymentAmount);
         goal.set("currentTotal", 0);
