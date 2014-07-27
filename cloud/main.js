@@ -184,17 +184,15 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
             var dateItems = [];
             var dateTotal = 0;
             var categoriesForDate = internalResponse.transactionsTotalByCategoryByDate[date];
-            console.log('categories ' + JSON.stringify(categories));
             for (j = 0; j < categories.length; j++) {
                 var category = categories[j];
-                console.log('category: ' + JSON.stringify(category));
-                var categoryTotal = categoriesForDate[category.name] ? categoriesForDate[category.name] : 0;
+                var categoryTotal = categoriesForDate[category.get('name')] ? categoriesForDate[category.get('name')] : 0;
                 if (categoryTotal) {
                     dateTotal += categoryTotal;
                     dateItems.push({
-                        categoryName: category.name,
+                        categoryName: category.get('name'),
                         categoryTotal: categoryTotal,
-                        categoryColor: category.color
+                        categoryColor: category.get('color')
                     });
                 }
             }
