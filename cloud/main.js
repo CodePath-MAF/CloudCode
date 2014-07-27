@@ -1,11 +1,11 @@
 logError = function(error) {
     console.error('Got an error ' + error.code + ' : ' + error.message);
-}
+};
 
 handleError = function(error) {
     logError(error);
     return Parse.Promise.Error(error);
-}
+};
 
 // Updating User & Goal object after a Transaction save operation
 Parse.Cloud.afterSave("Transaction", function(request) {
@@ -24,7 +24,7 @@ Parse.Cloud.afterSave("Transaction", function(request) {
         } else {
           totalCash = user.get("totalCash");
         }
-        user.set("totalCash", totalCash - transaction.get("amount"))
+        user.set("totalCash", totalCash - transaction.get("amount"));
       }
       user.save();
       console.log("User updated!");
@@ -51,18 +51,43 @@ Parse.Cloud.afterSave("Transaction", function(request) {
 
 // Transaction Helper Functions
 getTransactions = function(user) {
-    var promise = new Parse.Promise()
-    console.log('fetching transactions ' + JSON.stringify(user));
     var query = new Parse.Query('Transaction');
     query.equalTo('user', user);
     // XXX potentially take an argument to see if we need to include the category
     query.include('category');
     return query.find();
-}
+};
+
+getCategories = function() {
+    var query = new Parse.Query('Category');
+    return query.find();
+};
+
+getUser = function(userId) {
+    var promise = new Parse.Promise();
+    var query = new Parse.Query('User');
+    query.equalTo('objectId', userId);
+    query.find().then(function(results) {
+        promise.resolve(results[0]);
+    }, function(error) {
+        promise.reject(error);
+    });
+    return promise;
+};
 
 getStrippedDate = function(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
+};
+
+getLastSevenDays = function() {
+    var dates = [];
+    var today = new Date();
+    for (i = 0; i < 8; i++) {
+        dates.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
+    }
+    return dates;
+};
+
 
 //transactionsTotalByDate = function(request, internalResponse, callback) {
     //var internalResponse = internalResponse || {};
@@ -105,23 +130,23 @@ getStrippedDate = function(date) {
 
 transactionsTotalByCategoryByDate = function(request, internalResponse) {
     var promise = new Parse.Promise();
-    var internalResponse = internalResponse || {};
+    internalResponse = internalResponse || {};
     getTransactions(request.user).then(function(transactions) {
-        var transactionsByCategoryByDate = {};
+        var transactionsTotalByCategoryByDate = {};
         for (i = 0; i < transactions.length; i++) {
             var transaction = transactions[i];
             // TODO correct this logic, on iOS we treated transaction type 1 as an expense
             if (transaction.get('type') == 1) {
                 var strippedDate = getStrippedDate(transaction.get('transactionDate'));
-                var categoriesForDate = transactionsByCategoryByDate[strippedDate] ? transactionsByCategoryByDate[strippedDate] : {};
+                var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] ? transactionsTotalByCategoryByDate[strippedDate] : {};
                 var categoryName = transaction.get('category').get('name');
                 var categoryTotal = categoriesForDate[categoryName] ? categoriesForDate[categoryName] : 0;
                 categoryTotal += parseFloat(transaction.get('amount'));
                 categoriesForDate[categoryName] = categoryTotal;
-                transactionsByCategoryByDate[strippedDate] = categoriesForDate;
+                transactionsTotalByCategoryByDate[strippedDate] = categoriesForDate;
             }
         }
-        internalResponse.transactionsByCategoryByDate = transactionsByCategoryByDate;
+        internalResponse.transactionsTotalByCategoryByDate = transactionsTotalByCategoryByDate;
         promise.resolve(internalResponse);
     }, function(error) {
         logError(error);
@@ -132,14 +157,55 @@ transactionsTotalByCategoryByDate = function(request, internalResponse) {
 
 Parse.Cloud.define('transactionsTotalByCategoryByDate', function(request, response) {
     var internalResponse = {};
-    var query = new Parse.Query('User');
-    query.equalTo('objectId', request.params.userId);
-    query.find().then(function(users) {
-        request.user = users[0];
+    getUser(request.params.userId).then(function(user) {
+        request.user = user;
         return transactionsTotalByCategoryByDate(request, internalResponse);
     }).then(function() {
         response.success(internalResponse);
     }, function(error) {
         handleError(error);
+    });
+});
+
+Parse.Cloud.define('stackedBarChart', function(request, response) {
+    var internalResponse = {};
+    var maxValue = 0;
+    getUser(request.params.userId).then(function(user) {
+        request.user = user;
+        return transactionsTotalByCategoryByDate(request, internalResponse);
+    }).then(function() {
+        return getCategories();
+    }).then(function(categories) {
+        var dates = getLastSevenDays();
+        var xLabels = [];
+        var data = [];
+        for (i = 0; i < dates.length; i++) {
+            var date = dates[i];
+            var dateItems = [];
+            var dateTotal = 0;
+            var categoriesForDate = internalResponse.transactionsTotalByCategoryByDate[date];
+            for (j = 0; j < categories.length; j++) {
+                var category = categories[j];
+                var categoryTotal = categoriesForDate[category.name] ? categoriesForDate[category.name] : 0;
+                if (categoryTotal) {
+                    dateTotal += categoryTotal;
+                    dateItems.push({
+                        categoryName: category.name,
+                        categoryTotal: categoryTotal,
+                        categoryColor: category.color
+                    });
+                }
+            }
+            if (dateTotal > maxValue) {
+                maxValue = dateTotal;
+            }
+            data.push(dateItems);
+            xLabels.push(date);
+        }
+        response.success({
+            maxValue: maxValue,
+            data: data,
+            xLabels: xLabels,
+        });
     });
 });
