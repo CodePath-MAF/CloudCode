@@ -26,3 +26,11 @@ Create `config/global.json` and add in the Parse Application & Client ID for the
 ```
 
 **Note:** This config file will be gitginore.
+
+* **Install the Command Line Tool**
+
+`curl -s https://www.parse.com/downloads/cloud_code/installer.sh | sudo /bin/bash`
+
+## Deploy Instructions
+
+When you're ready to deploy changes to parse run: `parse deploy`
