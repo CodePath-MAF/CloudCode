@@ -138,9 +138,9 @@ transactionsTotalByCategoryByDate = function(request, internalResponse) {
             // TODO correct this logic, on iOS we treated transaction type 1 as an expense
             if (transaction.get('type') == 1) {
                 var strippedDate = getStrippedDate(transaction.get('transactionDate'));
-                var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] ? transactionsTotalByCategoryByDate[strippedDate] : {};
+                var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] || {};
                 var categoryName = transaction.get('category').get('name');
-                var categoryTotal = categoriesForDate[categoryName] ? categoriesForDate[categoryName] : 0;
+                var categoryTotal = categoriesForDate[categoryName] || 0;
                 categoryTotal += parseFloat(transaction.get('amount'));
                 categoriesForDate[categoryName] = categoryTotal;
                 transactionsTotalByCategoryByDate[strippedDate] = categoriesForDate;
@@ -183,10 +183,10 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
             var date = dates[i];
             var dateItems = [];
             var dateTotal = 0;
-            var categoriesForDate = internalResponse.transactionsTotalByCategoryByDate[date];
+            var categoriesForDate = internalResponse.transactionsTotalByCategoryByDate[date] || {};
             for (j = 0; j < categories.length; j++) {
                 var category = categories[j];
-                var categoryTotal = categoriesForDate[category.get('name')] ? categoriesForDate[category.get('name')] : 0;
+                var categoryTotal = categoriesForDate[category.get('name')] || 0;
                 if (categoryTotal) {
                     dateTotal += categoryTotal;
                     dateItems.push({
