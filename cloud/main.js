@@ -1,3 +1,9 @@
+/**
+ * The number of milliseconds in one day
+ * @type {number}
+ */
+MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
+
 logError = function(error) {
     console.error('Got an error ' + error.code + ' : ' + error.message);
 };
@@ -7,7 +13,49 @@ handleError = function(error) {
     return Parse.Promise.Error(error);
 };
 
-// Updating User & Goal object after a Transaction save operation
+/**
+ * Calculate days between two dates
+ * @param {date} startDate
+ * @param {date} endDate
+ * @return {number} Number of days in between
+ */
+daysBetween = function(startDate, endDate) {
+    return Math.floor((endDate - startDate) / MILLISECONDS_PER_DAY);
+}
+
+/**
+ * Method to run before saving the Goal
+ */
+Parse.Cloud.beforeSave("Goal", function(request, response) {
+    var goal = request.object;
+    if (goal.isNew()) {
+        var today = new Date();
+        var daysInBetween = daysBetween(today, goal.get("goalDate"));
+        var numPayments = Math.floor(daysInBetween / goal.get('paymentInterval'));
+        var paymentAmount = goal.get('amount') / numPayments;
+        console.log('today: ' + today + ' daysInBetween: ' + daysInBetween + ' numPayments: ' + numPayments + ' paymentAmount' + paymentAmount);
+
+        if (numPayments < 1) {
+            // Date selected is shorter than a successful first payment base on
+            // the payment interval
+            // TODO: improve error message
+            response.error("Date selected shorter than initial payment interval");
+            return;
+        }
+
+        goal.set("numPayments", numPayments);
+        goal.set("paymentAmount", paymentAmount);
+        goal.set("currentTotal", 0);
+
+        request.object = goal;
+    }
+    response.success();
+});
+
+/**
+ * Method to run after saving the Transaction. Will update User & Goal object
+ * accordingly.
+ */
 Parse.Cloud.afterSave("Transaction", function(request) {
   transaction = request.object;
 
