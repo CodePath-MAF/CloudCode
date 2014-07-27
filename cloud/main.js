@@ -166,6 +166,12 @@ Parse.Cloud.define('transactionsTotalByCategoryByDate', function(request, respon
     });
 });
 
+// Fetch the data for the stacked bar chart. This will return the following structure:
+// {
+//      'maxValue': <maximum total amongst all the dates>,
+//      'xLabels': <list of date strings to display as the xLabels>
+//      'data': <list of arrays which represent data points for each bar>
+//  }
 Parse.Cloud.define('stackedBarChart', function(request, response) {
     var internalResponse = {};
     var maxValue = 0;
