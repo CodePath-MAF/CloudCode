@@ -82,12 +82,11 @@ getStrippedDate = function(date) {
 getLastSevenDays = function() {
     var dates = [];
     var today = new Date();
-    for (i = 0; i < 8; i++) {
+    for (i = 0; i < 7; i++) {
         dates.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
     }
     return dates;
 };
-
 
 //transactionsTotalByDate = function(request, internalResponse, callback) {
     //var internalResponse = internalResponse || {};
