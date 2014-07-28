@@ -130,7 +130,7 @@ getStrippedDate = function(date) {
 getLastSevenDays = function(year, month, day) {
     var dates = [];
     for (i = 0; i < 7; i++) {
-        dates.push(new Date(year, month, day - i));
+        dates.push(new Date(year, month - 1, day - i));
     }
     return dates;
 };
