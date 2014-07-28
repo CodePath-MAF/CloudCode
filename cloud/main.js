@@ -127,9 +127,8 @@ getStrippedDate = function(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 };
 
-getLastSevenDays = function() {
+getLastSevenDays = function(today) {
     var dates = [];
-    var today = new Date();
     for (i = 0; i < 7; i++) {
         dates.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
     }
@@ -230,7 +229,7 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
     }).then(function() {
         return getCategories();
     }).then(function(categories) {
-        var dates = getLastSevenDays();
+        var dates = getLastSevenDays(request.params.today);
         var xLabels = [];
         var data = [];
         for (i = 0; i < dates.length; i++) {
