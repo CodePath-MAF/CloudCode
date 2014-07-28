@@ -1,3 +1,5 @@
+moment = require('moment');
+
 /**
  * The number of milliseconds in one day
  * @type {number}
@@ -256,7 +258,7 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
                 maxValue = dateTotal;
             }
             data.unshift(dateItems);
-            xLabels.unshift(date);
+            xLabels.unshift(moment(date).format('DDD'));
         }
         response.success({
             maxValue: maxValue,
