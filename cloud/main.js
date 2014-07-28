@@ -23,7 +23,7 @@ handleError = function(error) {
  */
 daysBetween = function(startDate, endDate) {
     return Math.floor((endDate - startDate) / MILLISECONDS_PER_DAY);
-}
+};
 
 /**
  * Method to run before saving the Goal
@@ -100,9 +100,11 @@ Parse.Cloud.afterSave("Transaction", function(request) {
 });
 
 // Transaction Helper Functions
-getTransactions = function(user) {
+getTransactions = function(user, type) {
     var query = new Parse.Query('Transaction');
     query.equalTo('user', user);
+    query.equalTo('type', type);
+    query.descending('transactionDate');
     // XXX potentially take an argument to see if we need to include the category
     query.include('category');
     return query.find();
@@ -126,72 +128,48 @@ getUser = function(userId) {
 };
 
 getStrippedDate = function(date) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    return moment(new Date(date.getFullYear(), date.getMonth(), date.getDate())).format('YYYY-MM-DD');
 };
 
 getLastSevenDays = function(year, month, day) {
     var dates = [];
     for (i = 0; i < 7; i++) {
-        dates.push(new Date(year, month - 1, day - i));
+        dates.push(moment(new Date(year, month - 1, day - i)).format('YYYY-MM-DD'));
     }
     return dates;
 };
 
-//transactionsTotalByDate = function(request, internalResponse, callback) {
-    //var internalResponse = internalResponse || {};
-    //getTransactions(request.user, function(error, transactions) {
-        //if (error) {
-            //callback(error);
-        //} else {
-            //var totalByDate = {};
-            //for (i = 0; i < transactions.length; i++) {
-                //var transaction = transactions[i];
-                //var strippedDate = getStrippedDate(transaction.get('transactionDate'));
-                //var total = totalByDate[strippedDate] ? totalByDate[strippedDate] : 0;
-                //totalByDate[strippedDate] = total + parseFloat(transaction.get('amount'));
-            //}
-            //internalResponse.totalByDate = totalByDate;
-            //callback(null, internalResponse);
-        //}
-    //});
-//}
-
-//Parse.Cloud.define('transactionsTotalByDate', function(request, response) {
-    //var query = new Parse.Query('User');
-    //query.equalTo('objectId', request.params.userId);
-    //query.find({
-        //success: function(user) {
-            //request.user = user;
-            //transactionsTotalByDate(user[0], request, function(error, internalResponse) {
-                //if (error) {
-                    //logErorr(error);
-                //} else {
-                    //response.success(internalResponse);
-                //}
-            //});
-        //},
-        //error: function() {
-            //logError(error);
-        //}
-    //});
-//});
+getTransactionsByDate = function(user) {
+    var promise = new Parse.Promise();
+    var transactionsByDate = {};
+    getTransactions(user, 2).then(function(transactions) {
+        for (i = 0; i < transactions.length; i++) {
+            var transaction = transactions[i];
+            var strippedDate = getStrippedDate(transaction.get('transactionDate'));
+            var transactionsForDate = transactionsByDate[strippedDate] || [];
+            transactionsForDate.push(transaction);
+            transactionsByDate[strippedDate] = transactionsForDate;
+        }
+        promise.resolve(transactionsByDate);
+    });
+    return promise;
+};
 
 transactionsTotalByCategoryByDate = function(request, internalResponse) {
     var promise = new Parse.Promise();
     internalResponse = internalResponse || {};
-    getTransactions(request.user).then(function(transactions) {
+    // type 2 is credit transactions
+    getTransactions(request.user, 2).then(function(transactions) {
         var transactionsTotalByCategoryByDate = {};
         for (i = 0; i < transactions.length; i++) {
             var transaction = transactions[i];
-            if (transaction.get('type') == 2) {
-                var strippedDate = getStrippedDate(transaction.get('transactionDate'));
-                var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] || {};
-                var categoryName = transaction.get('category').get('name');
-                var categoryTotal = categoriesForDate[categoryName] || 0;
-                categoryTotal += parseFloat(transaction.get('amount'));
-                categoriesForDate[categoryName] = categoryTotal;
-                transactionsTotalByCategoryByDate[strippedDate] = categoriesForDate;
-            }
+            var strippedDate = getStrippedDate(transaction.get('transactionDate'));
+            var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] || {};
+            var categoryName = transaction.get('category').get('name');
+            var categoryTotal = categoriesForDate[categoryName] || 0;
+            categoryTotal += parseFloat(transaction.get('amount'));
+            categoriesForDate[categoryName] = categoryTotal;
+            transactionsTotalByCategoryByDate[strippedDate] = categoriesForDate;
         }
         internalResponse.transactionsTotalByCategoryByDate = transactionsTotalByCategoryByDate;
         promise.resolve(internalResponse);
@@ -202,37 +180,18 @@ transactionsTotalByCategoryByDate = function(request, internalResponse) {
     return promise;
 };
 
-Parse.Cloud.define('transactionsTotalByCategoryByDate', function(request, response) {
-    var internalResponse = {};
-    getUser(request.params.userId).then(function(user) {
-        request.user = user;
-        return transactionsTotalByCategoryByDate(request, internalResponse);
-    }).then(function() {
-        response.success(internalResponse);
-    }, function(error) {
-        handleError(error);
-    });
-});
-
-// Fetch the data for the stacked bar chart. This will return the following structure:
-// {
-//      'maxValue': <maximum total amongst all the dates>,
-//      'xLabels': <list of date strings to display as the xLabels>
-//      'data': <list of arrays which represent data points for each bar>
-//  }
-Parse.Cloud.define('stackedBarChart', function(request, response) {
-    var internalResponse = {};
-    var maxValue = 0;
-    var hasData = false;
-    getUser(request.params.userId).then(function(user) {
-        request.user = user;
-        return transactionsTotalByCategoryByDate(request, internalResponse);
-    }).then(function() {
+stackedBarChart = function(request, internalResponse) {
+    var promise = new Parse.Promise();
+    internalResponse = internalResponse || {};
+    transactionsTotalByCategoryByDate(request, internalResponse).then(function() {
         return getCategories();
     }).then(function(categories) {
+        var maxValue = 0;
+        var hasData = false;
         var dates = getLastSevenDays(request.params.year, request.params.month, request.params.day);
         var xLabels = [];
         var data = [];
+        internalResponse.dates = [];
         for (i = 0; i < dates.length; i++) {
             var date = dates[i];
             var dateItems = [];
@@ -250,6 +209,11 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
                     });
                 }
             }
+
+            if (dateTotal) {
+                internalResponse.dates.push(date);
+            }
+
             if (dateTotal > maxValue) {
                 if (!hasData) {
                     hasData = true;
@@ -259,11 +223,49 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
             data.unshift(dateItems);
             xLabels.unshift(moment(date).format('ddd'));
         }
-        response.success({
+        internalResponse.stackedBarChart = {
             maxValue: maxValue,
             data: data,
             xLabels: xLabels,
             hasData: hasData,
+        };
+        promise.resolve(internalResponse);
+    });
+    return promise;
+};
+
+// Fetch the data for the stacked bar chart. This will return the following structure:
+// {
+//      'maxValue': <maximum total amongst all the dates>,
+//      'xLabels': <list of date strings to display as the xLabels>
+//      'data': <list of arrays which represent data points for each bar>
+//  }
+Parse.Cloud.define('stackedBarChart', function(request, response) {
+    var internalResponse = {};
+    getUser(request.params.userId).then(function(user) {
+        request.user = user;
+        return stackedBarChart(request, internalResponse);
+    }).then(function() {
+        response.success(internalResponse.stackedBarChart);
+    });
+});
+
+Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
+    var internalResponse = {};
+    getUser(request.params.userId).then(function(user) {
+        request.user = user;
+        return stackedBarChart(request, internalResponse);
+    }).then(function() {
+        return getTransactionsByDate(request.user);
+    }).then(function(transactionsByDate) {
+        console.log('transactionsByDate: ' + JSON.stringify(transactionsByDate));
+        response.success({
+            transactionsByDate: transactionsByDate,
+            stackedBarChart: internalResponse.stackedBarChart,
+            dates: internalResponse.dates,
+            spentThisWeek: 0,
+            spentToday: 0,
+            totalCash: request.user.get('totalCash')
         });
     });
 });
