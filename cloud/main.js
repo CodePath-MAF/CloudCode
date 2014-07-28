@@ -223,6 +223,7 @@ Parse.Cloud.define('transactionsTotalByCategoryByDate', function(request, respon
 Parse.Cloud.define('stackedBarChart', function(request, response) {
     var internalResponse = {};
     var maxValue = 0;
+    var hasData = false;
     getUser(request.params.userId).then(function(user) {
         request.user = user;
         return transactionsTotalByCategoryByDate(request, internalResponse);
@@ -250,6 +251,9 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
                 }
             }
             if (dateTotal > maxValue) {
+                if (!hasData) {
+                    hasData = true;
+                }
                 maxValue = dateTotal;
             }
             data.unshift(dateItems);
@@ -259,6 +263,7 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
             maxValue: maxValue,
             data: data,
             xLabels: xLabels,
+            hasData: hasData,
         });
     });
 });
