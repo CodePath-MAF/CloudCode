@@ -183,8 +183,7 @@ transactionsTotalByCategoryByDate = function(request, internalResponse) {
         var transactionsTotalByCategoryByDate = {};
         for (i = 0; i < transactions.length; i++) {
             var transaction = transactions[i];
-            // TODO correct this logic, on iOS we treated transaction type 1 as an expense
-            if (transaction.get('type') == 1) {
+            if (transaction.get('type') == 2) {
                 var strippedDate = getStrippedDate(transaction.get('transactionDate'));
                 var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] || {};
                 var categoryName = transaction.get('category').get('name');
