@@ -1,4 +1,4 @@
-moment = require('moment');
+moment = require('cloud/moment');
 
 /**
  * The number of milliseconds in one day
@@ -100,14 +100,22 @@ Parse.Cloud.afterSave("Transaction", function(request) {
 });
 
 // Transaction Helper Functions
-getTransactions = function(user, type) {
-    var query = new Parse.Query('Transaction');
-    query.equalTo('user', user);
-    query.equalTo('type', type);
-    query.descending('transactionDate');
-    // XXX potentially take an argument to see if we need to include the category
-    query.include('category');
-    return query.find();
+getTransactions = function(user, type, internalResponse) {
+    internalResponse = internalResponse || {};
+    if (!internalResponse.transactions) {
+        var query = new Parse.Query('Transaction');
+        query.equalTo('user', user);
+        query.equalTo('type', type);
+        query.descending('transactionDate');
+        // XXX potentially take an argument to see if we need to include the category
+        query.include('category');
+        return query.find().then(function(transactions) {
+            internalResponse.transactions = transactions;
+            return Parse.Promise.as(transactions);
+        });
+    } else {
+        return Parse.Promise.as(internalResponse.transactions);
+    }
 };
 
 getCategories = function() {
@@ -139,10 +147,11 @@ getLastSevenDays = function(year, month, day) {
     return dates;
 };
 
-getTransactionsByDate = function(user) {
+getTransactionsByDate = function(user, internalResponse) {
+    internalResponse = internalResponse || {};
     var promise = new Parse.Promise();
     var transactionsByDate = {};
-    getTransactions(user, 2).then(function(transactions) {
+    getTransactions(user, 2, internalResponse).then(function(transactions) {
         for (i = 0; i < transactions.length; i++) {
             var transaction = transactions[i];
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
@@ -155,11 +164,49 @@ getTransactionsByDate = function(user) {
     return promise;
 };
 
+getTotalForTransactions = function(transactions, filterFunction) {
+    var total = 0;
+    for (i = 0; i < transactions.length; i++) {
+        var transaction = transactions[i];
+        if (filterFunction(transaction)) {
+            total += transaction.get('amount');
+        }
+    }
+    return total;
+};
+
+spentToday = function(today, transactions) {
+    return getTotalForTransactions(transactions, function(transaction) {
+        var transactionDate = moment(transaction.get('transactionDate'));
+        if (
+            transaction.get('type') == 2 &&
+            transactionDate.year() == today.year() &&
+            transactionDate.month() == today.month() &&
+            transactionDate.date() == today.date()
+        ) {
+            return true;
+        } else {
+            return false;
+        }
+    });
+};
+
+spentThisWeek = function(today, transactions) {
+    return getTotalForTransactions(transactions, function(transaction) {
+        var transactionDate = moment(transaction.get('transactionDate'));
+        if (transaction.get('type') == 2 && transactionDate.week() == today.week()) {
+            return true;
+        } else {
+            return false;
+        }
+    });
+};
+
 transactionsTotalByCategoryByDate = function(request, internalResponse) {
     var promise = new Parse.Promise();
     internalResponse = internalResponse || {};
     // type 2 is credit transactions
-    getTransactions(request.user, 2).then(function(transactions) {
+    getTransactions(request.user, 2, internalResponse).then(function(transactions) {
         var transactionsTotalByCategoryByDate = {};
         for (i = 0; i < transactions.length; i++) {
             var transaction = transactions[i];
@@ -256,15 +303,15 @@ Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
         request.user = user;
         return stackedBarChart(request, internalResponse);
     }).then(function() {
-        return getTransactionsByDate(request.user);
+        return getTransactionsByDate(request.user, internalResponse);
     }).then(function(transactionsByDate) {
         console.log('transactionsByDate: ' + JSON.stringify(transactionsByDate));
         response.success({
             transactionsByDate: transactionsByDate,
             stackedBarChart: internalResponse.stackedBarChart,
             dates: internalResponse.dates,
-            spentThisWeek: 0,
-            spentToday: 0,
+            spentThisWeek: spentThisWeek(moment(request.params.today), internalResponse.transactions),
+            spentToday: spentToday(moment(request.params.today), internalResponse.transactions),
             totalCash: request.user.get('totalCash')
         });
     });
