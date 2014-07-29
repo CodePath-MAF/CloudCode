@@ -316,3 +316,89 @@ Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
         });
     });
 });
+
+
+transactionsTotalByDate = function(request, internalResponse) {
+    var promise = new Parse.Promise();
+    internalResponse = internalResponse || {};
+    // type 2 is credit transactions
+    getTransactions(request.user, 2, internalResponse).then(function(transactions) {
+        var transactionsTotalByDate = {};
+        for (i = 0; i < transactions.length; i++) {
+            var transaction = transactions[i];
+            var strippedDate = getStrippedDate(transaction.get('transactionDate'));
+            var amountForDate = transactionsTotalByDate[strippedDate] || 0;
+            amountForDate += parseFloat(transaction.get('amount'));
+            transactionsTotalByDate[strippedDate] = amountForDate;
+        }
+        internalResponse.transactionsTotalByDate = transactionsTotalByDate;
+        promise.resolve(internalResponse);
+    }, function(error) {
+        logError(error);
+        promise.reject(error);
+    });
+    return promise;
+};
+
+
+// Create data for lineChart
+lineChart = function(request, internalResponse) {
+    var promise = new Parse.Promise();
+    internalResponse = internalResponse || {};
+    transactionsTotalByDate(request, internalResponse).then(function() {
+        var maxValue = 0;
+        var hasData = false;
+        var dates = getLastSevenDays(request.params.year, request.params.month, request.params.day);
+        var xLabels = [];
+        var data = [];
+        internalResponse.dates = [];
+        for (i = 0; i < dates.length; i++) {
+            var date = dates[i];
+            var amountForDate = internalResponse.transactionsTotalByDate[date] || 0;
+
+            if (amountForDate) {
+                internalResponse.dates.push(date);
+            }
+
+            if (amountForDate > maxValue) {
+                if (!hasData) {
+                    hasData = true;
+                }
+                maxValue = amountForDate;
+            }
+
+            data.unshift(amountForDate);
+            xLabels.unshift(moment(date).format('ddd'));
+        }
+
+        internalResponse.lineChart = {
+            maxValue: maxValue,
+            data: data,
+            xLabels: xLabels,
+            hasData: hasData,
+        };
+        
+        promise.resolve(internalResponse);
+    });
+    return promise;
+};
+
+// Line Chart
+// Fetch data for the line chart over stacked bar chart. 
+// I wonder if we really need this. It wil be just some of all category expenses. Isn't it? 
+// Either way, 
+// This will return the following structure:
+// {
+//      'maxValue': <maximum total amongst all the dates>,
+//      'xLabels': <list of date strings to display as the xLabels>
+//      'data': < array with amount for earch day>
+//  }
+Parse.Cloud.define('lineChart', function(request, response) {
+    var internalResponse = {};
+    getUser(request.params.userId).then(function(user) {
+        request.user = user;
+        return lineChart(request, internalResponse);
+    }).then(function() {
+        response.success(internalResponse.lineChart);
+    });
+});
