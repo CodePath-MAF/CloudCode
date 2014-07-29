@@ -26,11 +26,90 @@ daysBetween = function(startDate, endDate) {
 };
 
 /**
+ * Method to record user payment
+ * @param {string} request.params.userId
+ * @param {string} request.params.goalId
+ * @return response.success or response.error
+ */
+Parse.Cloud.define("recordPayment", function(request, response) {
+    var user = null;
+
+    getUser(request.params.userId).then(function(u) {
+        user = u;
+        return getGoal(request.params.goalId);
+    }).then(function(goal) {
+        var Transaction = Parse.Object.extend("Transaction");
+        var transaction = new Transaction();
+
+        // Category
+        var Category = Parse.Object.extend("Category");
+        var category = new Category();
+        category.id = "93BaEoZPfo";
+
+        transaction.set("user", user);
+        transaction.set("amount", goal.get("paymentAmount"));
+        transaction.set("name", "Lending circle Payment");
+        transaction.set("goal", goal);
+        transaction.set("transactionDate", new Date());
+        transaction.set("type", 2); // CREDIT
+        transaction.set("category", category);
+        return transaction.save();
+    }).then(function(transaction) {
+        // the save succeed
+        response.success();
+    }, function(error) {
+        // The save failed
+        response.error("Oops! error recording payment.");
+    });
+});
+
+
+/**
+ * Method to Create a lending Circle for a user
+ * @param {string} request.params.userId
+ * @return response.success or response.error
+ */
+Parse.Cloud.define("createLendingCircleForUser", function(request, response) {
+    getUser(request.params.userId).then(function(user) {
+        console.log("user: " + user.get("username"));
+        var Goal = Parse.Object.extend("Goal");
+        var goal = new Goal();
+
+        var now = new moment().toDate();
+        var goalDate = moment().add('M', 10).toDate();
+        var cashOutDate = moment().add('M', 8).toDate();
+
+        goal.set("user", user);
+        goal.set("name", "Lending Circle");
+        goal.set("type", 1);
+        goal.set("status", 1);
+        goal.set("paymentInterval", 30);
+        goal.set("amount", 1000);
+        goal.set("paymentAmount", 100);
+        goal.set("currentTotal", 0);
+        goal.set("numPayments", 10);
+        goal.set("goalDate", goalDate);
+        goal.set("createdAt", now);
+        goal.set("numPaymentsMade", 0);
+        goal.set("cashOutDate", cashOutDate);
+        goal.set("paidOut", false);
+        return goal.save();
+    }).then(function(goal) {
+        // the save succeed
+        response.success();
+    }, function(error) {
+        // The save failed
+        response.error("Oops! error creating lending circle goal.");
+    });
+});
+
+
+/**
  * Method to run before saving the Goal
  */
 Parse.Cloud.beforeSave("Goal", function(request, response) {
     var goal = request.object;
-    if (goal.isNew()) {
+    if (goal.isNew() && goal.get("type") === 2) {
         var today = new Date();
         var daysInBetween = daysBetween(today, goal.get("goalDate"));
         var numPayments = Math.floor(daysInBetween / goal.get('paymentInterval'));
@@ -132,6 +211,20 @@ getUser = function(userId) {
     }, function(error) {
         promise.reject(error);
     });
+    return promise;
+};
+
+getGoal = function(goalId) {
+    var promise = new Parse.Promise();
+    var query = new Parse.Query('Goal');
+    query.get(goalId, {
+        success: function(goal) {
+            promise.resolve(goal);
+        },
+        error: function(object, error) {
+            promise.reject(error);
+        }
+    })
     return promise;
 };
 
