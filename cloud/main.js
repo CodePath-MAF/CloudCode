@@ -25,6 +25,19 @@ DEBIT_ENUM = 1;
  */
 CREDIT_ENUM = 2;
 
+/**
+ * Goal Type ENUM values
+ * @type {number}
+ */
+ GOAL_TYPE_LENDING_CIRCLE = 1;
+ GOAL_TYPE_PERSONAL = 2;
+
+ /**
+  * Goal Status ENUM values
+  */
+ GOAL_STATUS_IN_PROGRESS = 1;
+ GOAL_STATUS_ACHIEVED = 2;
+
 logError = function(error) {
     console.error('Error: ' + JSON.stringify(error));
 };
@@ -368,8 +381,7 @@ getPostsForGoal = function(goalId, internalResponse) {
     var query = new Parse.Query('Post');
     query.equalTo('goal', createGoalWithId(goalId));
     query.descending('createdAt');
-    // XXX i don't think this will actually include the comment
-    query.include('comment');
+    query.include('comments');
     return query.find().then(function(posts) {
         internalResponse.posts = posts;
         return Parse.Promise.as();
@@ -447,10 +459,8 @@ createParentGoal = function(request, internalResponse) {
     });
     goal.set('users', users);
     goal.set('name', request.params.name);
-    // goal type 2 is a Lending Circle
-    goal.set('type', 2);
-    // status 1 is "In Progress"
-    goal.set('status', 1);
+    goal.set('type', GOAL_TYPE_LENDING_CIRCLE);
+    goal.set('status', GOAL_STATUS_IN_PROGRESS);
     goal.set('amount', request.params.users.length * request.params.paymentAmount);
     goal.set('paymentAmount', parseFloat(request.params.paymentAmount));
     goal.set('numPayments', request.params.users.length);
@@ -603,13 +613,15 @@ Parse.Cloud.define('createPost', function(request, response) {
 Parse.Cloud.define('createComment', function(request, response) {
     var Comment = Parse.Object.extend('Comment');
     var comment = new Comment();
+    var post = createPostWithId(request.params.postId);
     comment.set('user', createUserWithId(request.params.userId));
-    comment.set('post', createPostWithId(request.params.postId));
+    comment.set('post', post);
     comment.set('content', request.params.content);
-    comment.save().then(function(comment) {
+    post.add('comments', comment);
+    post.save().then(function(post) {
         response.success({
             success: true,
-            comment: comment,
+            comment: post,
         });
     });
 });
