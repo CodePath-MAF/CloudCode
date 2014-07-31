@@ -1,4 +1,5 @@
 moment = require('cloud/moment');
+_ = require('cloud/underscore-min');
 
 /**
  * The number of milliseconds in one day
@@ -7,7 +8,7 @@ moment = require('cloud/moment');
 MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 
 logError = function(error) {
-    console.error('Got an error ' + error.code + ' : ' + error.message);
+    console.error('Error: ' + JSON.stringify(error));
 };
 
 handleError = function(error) {
@@ -30,7 +31,8 @@ daysBetween = function(startDate, endDate) {
  */
 Parse.Cloud.beforeSave("Goal", function(request, response) {
     var goal = request.object;
-    if (goal.isNew()) {
+    // only calculate the number of payments if we don't have them already
+    if (goal.isNew() && !goal.get('numPayments')) {
         var today = new Date();
         var daysInBetween = daysBetween(today, goal.get("goalDate"));
         var numPayments = Math.floor(daysInBetween / goal.get('paymentInterval'));
@@ -99,7 +101,31 @@ Parse.Cloud.afterSave("Transaction", function(request) {
   }
 });
 
-// Transaction Helper Functions
+/**
+ * General Helpers
+ */
+
+createPostWithId = function(postId) {
+    var Post = Parse.Object.extend('Post');
+    var post = new Post();
+    post.id = postId;
+    return post;
+};
+
+createGoalWithId = function(goalId) {
+    var Goal = Parse.Object.extend('Goal');
+    var goal = new Goal();
+    goal.id = goalId;
+    return goal;
+};
+
+createUserWithId = function(userId) {
+    var User = Parse.Object.extend('User');
+    var user = new User();
+    user.id = userId;
+    return user;
+};
+
 getTransactions = function(user, type, internalResponse) {
     internalResponse = internalResponse || {};
     if (!internalResponse.transactions) {
@@ -147,18 +173,21 @@ getLastSevenDays = function(year, month, day) {
     return dates;
 };
 
+/**
+ * Helpers for fetching the Stacked Bar Chart Detail View
+ */
+
 getTransactionsByDate = function(user, internalResponse) {
     internalResponse = internalResponse || {};
     var promise = new Parse.Promise();
     var transactionsByDate = {};
     getTransactions(user, 2, internalResponse).then(function(transactions) {
-        for (i = 0; i < transactions.length; i++) {
-            var transaction = transactions[i];
+        _.each(transactions, function(transaction) {
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
             var transactionsForDate = transactionsByDate[strippedDate] || [];
             transactionsForDate.push(transaction);
             transactionsByDate[strippedDate] = transactionsForDate;
-        }
+        });
         promise.resolve(transactionsByDate);
     });
     return promise;
@@ -166,12 +195,11 @@ getTransactionsByDate = function(user, internalResponse) {
 
 getTotalForTransactions = function(transactions, filterFunction) {
     var total = 0;
-    for (i = 0; i < transactions.length; i++) {
-        var transaction = transactions[i];
+    _.each(transactions, function(transaction) {
         if (filterFunction(transaction)) {
             total += transaction.get('amount');
         }
-    }
+    });
     return total;
 };
 
@@ -208,8 +236,7 @@ transactionsTotalByCategoryByDate = function(request, internalResponse) {
     // type 2 is credit transactions
     getTransactions(request.user, 2, internalResponse).then(function(transactions) {
         var transactionsTotalByCategoryByDate = {};
-        for (i = 0; i < transactions.length; i++) {
-            var transaction = transactions[i];
+        _.each(transactions, function(transaction) {
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
             var categoriesForDate = transactionsTotalByCategoryByDate[strippedDate] || {};
             var categoryName = transaction.get('category').get('name');
@@ -217,7 +244,7 @@ transactionsTotalByCategoryByDate = function(request, internalResponse) {
             categoryTotal += parseFloat(transaction.get('amount'));
             categoriesForDate[categoryName] = categoryTotal;
             transactionsTotalByCategoryByDate[strippedDate] = categoriesForDate;
-        }
+        });
         internalResponse.transactionsTotalByCategoryByDate = transactionsTotalByCategoryByDate;
         promise.resolve(internalResponse);
     }, function(error) {
@@ -239,13 +266,11 @@ stackedBarChart = function(request, internalResponse) {
         var xLabels = [];
         var data = [];
         internalResponse.dates = [];
-        for (i = 0; i < dates.length; i++) {
-            var date = dates[i];
+        _.each(dates, function(date) {
             var dateItems = [];
             var dateTotal = 0;
             var categoriesForDate = internalResponse.transactionsTotalByCategoryByDate[date] || {};
-            for (j = 0; j < categories.length; j++) {
-                var category = categories[j];
+            _.each(categories, function(category) {
                 var categoryTotal = categoriesForDate[category.get('name')] || 0;
                 if (categoryTotal) {
                     dateTotal += categoryTotal;
@@ -255,7 +280,7 @@ stackedBarChart = function(request, internalResponse) {
                         categoryColor: category.get('color')
                     });
                 }
-            }
+            });
 
             if (dateTotal) {
                 internalResponse.dates.push(date);
@@ -269,7 +294,8 @@ stackedBarChart = function(request, internalResponse) {
             }
             data.unshift(dateItems);
             xLabels.unshift(moment(date).format('ddd'));
-        }
+        });
+
         internalResponse.stackedBarChart = {
             maxValue: maxValue,
             data: data,
@@ -277,26 +303,146 @@ stackedBarChart = function(request, internalResponse) {
             hasData: hasData,
         };
         promise.resolve(internalResponse);
+
     });
     return promise;
 };
 
-// Fetch the data for the stacked bar chart. This will return the following structure:
-// {
-//      'maxValue': <maximum total amongst all the dates>,
-//      'xLabels': <list of date strings to display as the xLabels>
-//      'data': <list of arrays which represent data points for each bar>
-//  }
-Parse.Cloud.define('stackedBarChart', function(request, response) {
-    var internalResponse = {};
-    getUser(request.params.userId).then(function(user) {
-        request.user = user;
-        return stackedBarChart(request, internalResponse);
-    }).then(function() {
-        response.success(internalResponse.stackedBarChart);
+/**
+ * Helpers for populating the goal views
+ */
+
+getPostsForGoal = function(goalId, internalResponse) {
+    internalResponse = internalResponse || {};
+    // fetch posts related to the goals
+    var query = new Parse.Query('Post');
+    query.equalTo('goal', createGoalWithId(goalId));
+    query.descending('createdAt');
+    // XXX i don't think this will actually include the comment
+    query.include('comment');
+    return query.find().then(function(posts) {
+        internalResponse.posts = posts;
+        return Parse.Promise.as();
     });
+};
+
+getParentGoalDetailView = function(request, internalResponse) {
+    internalResponse = internalResponse || {};
+    // fetch the parent goal
+    var query = new Parse.Query('Goal');
+    query.equalTo('objectId', request.params.parentGoalId);
+    return query.find().then(function(results) {
+        // fetch the child goals
+        var parentGoal = results[0];
+        internalResponse.parentGoal = parentGoal;
+        var childQuery = new Parse.Query('Goal');
+        childQuery.equalTo('parentGoal', parentGoal);
+        childQuery.ascending('cashOutDate');
+        return childQuery.find();
+    }).then(function(results) {
+        // collect child goal data
+        var userGoal,
+            cashOutSchedule = [];
+        _.each(results, function(goal) {
+            // XXX alternatively this could be goalId
+            if (goal.get('user').id == request.params.userId) {
+                userGoal = goal;
+            }
+            cashOutSchedule.push({
+                userId: goal.get('user').id,
+                paidOut: goal.get('paidOut')
+            });
+        });
+        internalResponse.cashOutSchedule = cashOutSchedule;
+        internalResponse.userGoal = userGoal;
+        return Parse.Promise.as();
+    }).then(function() {
+        return getPostsForGoal(request.params.parentGoalId, internalResponse);
+    }).then(function() {
+        internalResponse.goalDetails = {
+            cashOutSchedule: internalResponse.cashOutSchedule,
+            isLendingCircle: true
+        };
+        return Parse.Promise.as();
+    });
+};
+
+getGoalDetailView = function(request, internalResponse) {
+    internalResponse = internalResponse || {};
+    var query = new Parse.Query('Goal');
+    query.equalTo('objectId', request.params.goalId);
+    return query.find().then(function(results) {
+        internalResponse.userGoal = results[0];
+        return Parse.Promise();
+    }).then(function() {
+        return getPostsForGoal(request.params.goalId, internalResponse);
+    }).then(function() {
+        internalResponse.goalDetails = {
+            isLendingCircle: false
+        };
+        return Parse.Promise.as();
+    });
+};
+
+/**
+ * Helpers for creating lending circles
+ */
+
+createParentGoal = function(request, internalResponse) {
+    internalResponse = internalResponse || {};
+    var Goal = Parse.Object.extend('Goal');
+    var goal = new Goal();
+    users = _.map(request.params.users, function(userId) {
+        return createUserWithId(userId);
+    });
+    goal.set('users', users);
+    goal.set('name', request.params.name);
+    // goal type 2 is a Lending Circle
+    goal.set('type', 2);
+    // status 1 is "In Progress"
+    goal.set('status', 1);
+    goal.set('amount', request.params.users.length * request.params.paymentAmount);
+    goal.set('paymentAmount', parseFloat(request.params.paymentAmount));
+    goal.set('numPayments', request.params.users.length);
+    return goal.save();
+};
+
+/**
+ * Cloud Functions
+ */
+
+/**
+ * Get the information needed to render the Goal Detail View
+ * @param {string} goalId The Goal ID you want the details for
+ * @param {string} parentGoalId The goal's parent id if available
+ * @param {string} userId The User ID of the user making the request
+ */
+Parse.Cloud.define('goalDetailView', function(request, response) {
+    var internalResponse = {};
+    if (request.params.parentGoalId) {
+        goalDetails = getParentGoalDetailView(request, internalResponse);
+    } else {
+        goalDetails = getGoalDetailView(request, internalResponse);
+    }
+
+    goalDetails.then(function() {
+        response.success({
+            goal: internalResponse.userGoal,
+            goalDetails: internalResponse.goalDetails,
+            posts: internalResponse.posts
+        });
+    });
+
 });
 
+/**
+ * Get the information needed to render the Stacked Bar Chart Detail View
+ * @param {string} userId User ID making the request
+ * @param {date} today Date representing today's date
+ * @param {number} year Year of the latest transaction you want to display
+ * @param {number} month Month of the latest transaction you want to display
+ * @param {number} day Day of the latest transaction you want to display
+ */
 Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
     var internalResponse = {};
     getUser(request.params.userId).then(function(user) {
@@ -305,7 +451,6 @@ Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
     }).then(function() {
         return getTransactionsByDate(request.user, internalResponse);
     }).then(function(transactionsByDate) {
-        console.log('transactionsByDate: ' + JSON.stringify(transactionsByDate));
         response.success({
             transactionsByDate: transactionsByDate,
             stackedBarChart: internalResponse.stackedBarChart,
@@ -314,5 +459,130 @@ Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
             spentToday: spentToday(moment(request.params.today), internalResponse.transactions),
             totalCash: request.user.get('totalCash')
         });
+    });
+});
+
+/**
+ * Create a lending circle for a list of users
+ * @param {list} users List of users in the lending circle (should be ordered by date they're going to get cashed out)
+ * @param {number} year Year of the first cash out date
+ * @param {number} month Month of the first cash out date
+ * @param {number} day Day of the first cash out date
+ * @param {string} name Name of the lending circle
+ * @param {string} paymentAmount Amount of the monthly payments
+ */
+Parse.Cloud.define('createLendingCircle', function(request, response) {
+    var internalResponse = {};
+    var firstPayment = moment([request.params.year, request.params.month - 1, request.params.day]);
+    var nextPayment = firstPayment;
+    createParentGoal(request, internalResponse).then(function(parentGoal) {
+        internalResponse.parentGoal = parentGoal;
+        var promise = Parse.Promise.as();
+        //var promises = [];
+        var Goal = Parse.Object.extend('Goal');
+        _.each(request.params.users, function(userId) {
+            var goal = new Goal();
+            goal.set('user', createUserWithId(userId));
+            goal.set('name', parentGoal.get('name'));
+            goal.set('type', parentGoal.get('type'));
+            goal.set('status', parentGoal.get('status'));
+            goal.set('amount', parentGoal.get('amount'));
+            goal.set('paymentAmount', parentGoal.get('paymentAmount'));
+            goal.set('numPayments', parentGoal.get('numPayments'));
+            goal.set('parentGoal', parentGoal);
+            goal.set('cashOutDate', nextPayment.toDate());
+            goal.set('paidOut', false);
+            nextPayment = nextPayment.add('months', 1);
+            //promises.push(goal.save());
+            promise = promise.then(function() {
+                return goal.save();
+            });
+        });
+        // XXX for some reason it isn't working when we run this in parallel
+        // (https://parse.com/docs/js_guide#promises-parallel) get this error:
+        // {"code":141,"error":"Uncaught Tried to save an object with a pointer
+        // to a new, unsaved object."}
+        //return Parse.Promise.when(promises);
+        return promise;
+    }).then(function(goals) {
+        response.success({
+            parentGoal: internalResponse.parentGoal,
+            userGoals: goals
+        });
+    }, function(error) {
+        logError(error);
+        response.error();
+    });
+});
+
+/**
+ * Create a post
+ * @param {string} userId User ID of the user making the post
+ * @param {string} goalId Goal ID the post is related to
+ * @param {string} content Content of the post
+ * @param {number} type Type of post
+ * @param {string} toUserId The user id of the recipient (only applicable for private posts)
+ */
+Parse.Cloud.define('createPost', function(request, response) {
+    var Post = Parse.Object.extend('Post');
+    var post = new Post();
+    post.set('user', createUserWithId(request.params.userId));
+    post.set('goal', createGoalWithId(request.params.goalId));
+    post.set('content', request.params.content);
+    post.set('type', request.params.type);
+    if (request.params.toUserId) {
+        post.set('toUser', request.params.toUserId);
+    }
+    post.save().then(function(post) {
+        response.success({
+            success: true,
+            post: post,
+        });
+    }, function(error) {
+        logError(error);
+        response.error();
+    });
+});
+
+/**
+ * Create a comment for a post
+ * @param {string} postId The post the comment is associated with
+ * @param {string} userId The user posting the comment
+ * @param {string} content The contents of the commment
+ */
+Parse.Cloud.define('createComment', function(request, response) {
+    var Comment = Parse.Object.extend('Comment');
+    var comment = new Comment();
+    comment.set('user', createUserWithId(request.params.userId));
+    comment.set('post', createPostWithId(request.params.postId));
+    comment.set('content', request.params.content);
+    comment.save().then(function(comment) {
+        response.success({
+            success: true,
+            comment: comment,
+        });
+    });
+});
+
+/**
+ * Fetch the data for the stacked bar chart.
+ * This will return the following structure:
+ * {
+ *      'maxValue': <maximum total amongst all the dates>,
+ *      'xLabels': <list of date strings to display as the xLabels>
+ *      'data': <list of arrays which represent data points for each bar>
+ *  }
+ * @param {string} userId User ID making the request
+ * @param {number} year Year of the latest transaction you want to display
+ * @param {number} month Month of the latest transaction you want to display
+ * @param {number} day Day of the latest transaction you want to display
+ */
+Parse.Cloud.define('stackedBarChart', function(request, response) {
+    var internalResponse = {};
+    getUser(request.params.userId).then(function(user) {
+        request.user = user;
+        return stackedBarChart(request, internalResponse);
+    }).then(function() {
+        response.success(internalResponse.stackedBarChart);
     });
 });
