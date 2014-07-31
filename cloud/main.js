@@ -14,6 +14,12 @@ MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 BILLS_CATEGORY_ID = "93BaEoZPfo";
 
 /**
+ * Debit ENUM value
+ * @type {number}
+ */
+DEBIT_ENUM = 1;
+
+/**
  * Credit ENUM value
  * @type {number}
  */
@@ -102,7 +108,6 @@ Parse.Cloud.afterSave("Transaction", function(request) {
             console.error('Failed to update user, with error code: ' + error.message);
           }
         });
-      //console.log("User updated!");
     },
     error: function(error) {
         logError(error);
@@ -113,8 +118,15 @@ Parse.Cloud.afterSave("Transaction", function(request) {
     queryGoal = new Parse.Query("Goal");
     queryGoal.get(transaction.get("goal").id, {
       success: function(goal) {
-        goal.increment("currentTotal", transaction.get("amount"));
-        goal.increment("numPaymentsMade");
+        if (transaction.get("type") == CREDIT_ENUM) {
+            // Is a payment event
+            goal.increment("currentTotal", transaction.get("amount"));
+            goal.increment("numPaymentsMade");
+        } else {
+            // Is a cash out event
+            goal.set("paidOut", true);
+        }
+
         goal.save();
         console.log("Goal updated!");
       },
@@ -660,5 +672,47 @@ Parse.Cloud.define("recordPayment", function(request, response) {
     }, function(error) {
         // The save failed
         response.error("Oops! error recording payment.");
+    });
+});
+
+/**
+ * Method to record cash out event
+ * @param {string} request.params.userId
+ * @param {string} request.params.goalId
+ * @return response.success or response.error
+ */
+Parse.Cloud.define("recordCashOut", function(request, response) {
+    var user = null;
+
+    getUser(request.params.userId).then(function(u) {
+        user = u;
+        return getGoal(request.params.goalId);
+    }).then(function(goal) {
+        if (!goal.get("paidOut")) {
+            var Transaction = Parse.Object.extend("Transaction");
+            var transaction = new Transaction();
+
+            // Category
+            var Category = Parse.Object.extend("Category");
+            var category = new Category();
+            category.id = BILLS_CATEGORY_ID;
+
+            transaction.set("user", user);
+            transaction.set("amount", goal.get("amount"));
+            transaction.set("name", "Lending circle Cash Out");
+            transaction.set("goal", goal);
+            transaction.set("transactionDate", new Date());
+            transaction.set("type", DEBIT_ENUM); // DEBIT
+            transaction.set("category", category);
+            return transaction.save();
+        } else {
+            return Parse.Promise.error("the goal for the user had already being cashed out.");
+        }
+    }).then(function(transaction) {
+        // the save succeed
+        response.success();
+    }, function(error) {
+        // The save failed
+        response.error("Oops! error recording a cash out. " + error);
     });
 });
