@@ -161,6 +161,20 @@ getUser = function(userId) {
     return promise;
 };
 
+getGoal = function(goalId) {
+    var promise = new Parse.Promise();
+    var query = new Parse.Query('Goal');
+    query.get(goalId, {
+        success: function(goal) {
+            promise.resolve(goal);
+        },
+        error: function(object, error) {
+            promise.reject(error);
+        }
+    })
+    return promise;
+};
+
 getStrippedDate = function(date) {
     return moment(new Date(date.getFullYear(), date.getMonth(), date.getDate())).format('YYYY-MM-DD');
 };
