@@ -105,12 +105,12 @@ Parse.Cloud.afterSave("Transaction", function(request) {
         console.log("totalCash: " + user.get("totalCash"));
         // Credit transaction, decrease cash
         if (!user.get("totalCash")) {
-          console.log("Empty totalCash!")
+          console.log("Empty totalCash!");
           totalCash = 0;
         } else {
           totalCash = user.get("totalCash");
         }
-        totalCash = totalCash - transaction.get("amount")
+        totalCash = totalCash - transaction.get("amount");
         user.set("totalCash", totalCash);
       }
       user.save(null, {
@@ -220,7 +220,7 @@ getGoal = function(goalId) {
         error: function(object, error) {
             promise.reject(error);
         }
-    })
+    });
     return promise;
 };
 
