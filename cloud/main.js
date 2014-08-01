@@ -175,15 +175,16 @@ createUserWithId = function(userId) {
     return user;
 };
 
-getTransactions = function(user, type, internalResponse) {
+getTransactions = function(user, type, internalResponse, includeCategory) {
     internalResponse = internalResponse || {};
     if (!internalResponse.transactions) {
         var query = new Parse.Query('Transaction');
         query.equalTo('user', user);
         query.equalTo('type', type);
         query.descending('transactionDate');
-        // XXX potentially take an argument to see if we need to include the category
-        query.include('category');
+        if (includeCategory) {
+            query.include('category');
+        }
         return query.find().then(function(transactions) {
             internalResponse.transactions = transactions;
             return Parse.Promise.as(transactions);
@@ -196,6 +197,16 @@ getTransactions = function(user, type, internalResponse) {
 getCategories = function() {
     var query = new Parse.Query('Category');
     return query.find();
+};
+
+addUserToRequest = function(request) {
+    if (!request.user) {
+        if (!request.params.userId) {
+            console.error('"userId" needs to be submitted in order to attach user to the request.');
+            return;
+        }
+        request.user = createUserWithId(request.params.userId);
+    }
 };
 
 getUser = function(userId) {
@@ -244,7 +255,7 @@ getTransactionsByDate = function(user, internalResponse) {
     internalResponse = internalResponse || {};
     var promise = new Parse.Promise();
     var transactionsByDate = {};
-    getTransactions(user, 2, internalResponse).then(function(transactions) {
+    getTransactions(user, CREDIT_ENUM, internalResponse, true).then(function(transactions) {
         _.each(transactions, function(transaction) {
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
             var transactionsForDate = transactionsByDate[strippedDate] || [];
@@ -270,7 +281,7 @@ spentToday = function(today, transactions) {
     return getTotalForTransactions(transactions, function(transaction) {
         var transactionDate = moment(transaction.get('transactionDate'));
         if (
-            transaction.get('type') == 2 &&
+            transaction.get('type') == CREDIT_ENUM &&
             transactionDate.year() == today.year() &&
             transactionDate.month() == today.month() &&
             transactionDate.date() == today.date()
@@ -285,7 +296,7 @@ spentToday = function(today, transactions) {
 spentThisWeek = function(today, transactions) {
     return getTotalForTransactions(transactions, function(transaction) {
         var transactionDate = moment(transaction.get('transactionDate'));
-        if (transaction.get('type') == 2 && transactionDate.week() == today.week()) {
+        if (transaction.get('type') == CREDIT_ENUM && transactionDate.week() == today.week()) {
             return true;
         } else {
             return false;
@@ -296,8 +307,7 @@ spentThisWeek = function(today, transactions) {
 transactionsTotalByCategoryByDate = function(request, internalResponse) {
     var promise = new Parse.Promise();
     internalResponse = internalResponse || {};
-    // type 2 is credit transactions
-    getTransactions(request.user, 2, internalResponse).then(function(transactions) {
+    getTransactions(request.user, CREDIT_ENUM, internalResponse, true).then(function(transactions) {
         var transactionsTotalByCategoryByDate = {};
         _.each(transactions, function(transaction) {
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
@@ -586,7 +596,8 @@ Parse.Cloud.define('createLendingCircle', function(request, response) {
 Parse.Cloud.define('createPost', function(request, response) {
     var Post = Parse.Object.extend('Post');
     var post = new Post();
-    post.set('user', createUserWithId(request.params.userId));
+    addUserToRequest(request);
+    post.set('user', request.user);
     post.set('goal', createGoalWithId(request.params.goalId));
     post.set('content', request.params.content);
     post.set('type', request.params.type);
@@ -614,7 +625,8 @@ Parse.Cloud.define('createComment', function(request, response) {
     var Comment = Parse.Object.extend('Comment');
     var comment = new Comment();
     var post = createPostWithId(request.params.postId);
-    comment.set('user', createUserWithId(request.params.userId));
+    addUserToRequest(request);
+    comment.set('user', request.user);
     comment.set('post', post);
     comment.set('content', request.params.content);
     post.add('comments', comment);
@@ -641,10 +653,8 @@ Parse.Cloud.define('createComment', function(request, response) {
  */
 Parse.Cloud.define('stackedBarChart', function(request, response) {
     var internalResponse = {};
-    getUser(request.params.userId).then(function(user) {
-        request.user = user;
-        return stackedBarChart(request, internalResponse);
-    }).then(function() {
+    addUserToRequest(request);
+    stackedBarChart(request, internalResponse).then(function() {
         response.success(internalResponse.stackedBarChart);
     });
 });
@@ -656,12 +666,8 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
  * @return response.success or response.error
  */
 Parse.Cloud.define("recordPayment", function(request, response) {
-    var user = null;
-
-    getUser(request.params.userId).then(function(u) {
-        user = u;
-        return getGoal(request.params.goalId);
-    }).then(function(goal) {
+    addUserToRequest(request);
+    getGoal(request.params.goalId).then(function(goal) {
         var Transaction = Parse.Object.extend("Transaction");
         var transaction = new Transaction();
 
@@ -670,7 +676,7 @@ Parse.Cloud.define("recordPayment", function(request, response) {
         var category = new Category();
         category.id = BILLS_CATEGORY_ID;
 
-        transaction.set("user", user);
+        transaction.set("user", request.user);
         transaction.set("amount", goal.get("paymentAmount"));
         transaction.set("name", "Lending circle Payment");
         transaction.set("goal", goal);
@@ -694,12 +700,8 @@ Parse.Cloud.define("recordPayment", function(request, response) {
  * @return response.success or response.error
  */
 Parse.Cloud.define("recordCashOut", function(request, response) {
-    var user = null;
-
-    getUser(request.params.userId).then(function(u) {
-        user = u;
-        return getGoal(request.params.goalId);
-    }).then(function(goal) {
+    addUserToRequest(request);
+    getGoal(request.params.goalId).then(function(goal) {
         if (!goal.get("paidOut")) {
             var Transaction = Parse.Object.extend("Transaction");
             var transaction = new Transaction();
@@ -709,7 +711,7 @@ Parse.Cloud.define("recordCashOut", function(request, response) {
             var category = new Category();
             category.id = BILLS_CATEGORY_ID;
 
-            transaction.set("user", user);
+            transaction.set("user", request.user);
             transaction.set("amount", goal.get("amount"));
             transaction.set("name", "Lending circle Cash Out");
             transaction.set("goal", goal);
