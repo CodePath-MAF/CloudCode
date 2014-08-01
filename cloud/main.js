@@ -38,6 +38,15 @@ CREDIT_ENUM = 2;
  GOAL_STATUS_IN_PROGRESS = 1;
  GOAL_STATUS_ACHIEVED = 2;
 
+ /**
+  * Payment Interval ENUM Values
+  */
+ PAYMENT_INTERVAL_DAILY = 1;
+ PAYMENT_INTERVAL_WEEKLY = 7;
+ PAYMENT_INTERVAL_BIWEEKLY = 14;
+ PAYMENT_INTERVAL_MONTHLY = 30;
+ PAYMENT_INTERVAL_BIMONTHLY = 60;
+
 logError = function(error) {
     console.error('Error: ' + JSON.stringify(error));
 };
@@ -55,6 +64,29 @@ handleError = function(error) {
  */
 daysBetween = function(startDate, endDate) {
     return Math.floor((endDate - startDate) / MILLISECONDS_PER_DAY);
+};
+
+getNextPaymentDate = function(currentPaymentDate, paymentInterval) {
+    var nextPaymentDate = moment(currentPaymentDate);
+    switch (paymentInterval) {
+        case PAYMENT_INTERVAL_DAILY:
+            nextPaymentDate = nextPaymentDate.add('days', 1);
+            break;
+        case PAYMENT_INTERVAL_WEEKLY:
+            nextPaymentDate = nextPaymentDate.add('weeks', 1);
+            break;
+        case PAYMENT_INTERVAL_BIWEEKLY:
+            nextPaymentDate = nextPaymentDate.add('weeks', 2);
+            break;
+        case PAYMENT_INTERVAL_MONTHLY:
+            nextPaymentDate = nextPaymentDate.add('months', 1);
+            break;
+        case PAYMENT_INTERVAL_BIMONTHLY:
+            nextPaymentDate = nextPaymentDate.add('months', 2);
+            break;
+    }
+    console.log('changing nextPaymentDate from: ' + currentPaymentDate + ' to: ' + nextPaymentDate.toDate());
+    return nextPaymentDate.toDate();
 };
 
 /**
@@ -82,6 +114,10 @@ Parse.Cloud.beforeSave("Goal", function(request, response) {
         goal.set("paymentAmount", paymentAmount);
         goal.set("currentTotal", 0);
 
+        if (!goal.get('nextPaymentDate')) {
+            goal.set('nextPaymentDate', getNextPaymentDate(today, goal.get('paymentInterval')));
+        }
+
         request.object = goal;
     }
     response.success();
@@ -92,62 +128,64 @@ Parse.Cloud.beforeSave("Goal", function(request, response) {
  * accordingly.
  */
 Parse.Cloud.afterSave("Transaction", function(request) {
-  transaction = request.object;
+    transaction = request.object;
 
-  queryUser = new Parse.Query(Parse.User);
-  queryUser.get(transaction.get("user").id, {
-    success: function(user) {
-      Parse.Cloud.useMasterKey();
-      if (transaction.get("type") == 1) {
-        // Debit transaction, increase cash
-        user.increment("totalCash", transaction.get("amount"));
-      } else {
-        console.log("totalCash: " + user.get("totalCash"));
-        // Credit transaction, decrease cash
-        if (!user.get("totalCash")) {
-          console.log("Empty totalCash!");
-          totalCash = 0;
+    var promises = [];
+    queryUser = new Parse.Query(Parse.User);
+    queryUser.get(transaction.get("user").id).then(function(user) {
+        Parse.Cloud.useMasterKey();
+        if (transaction.get("type") == DEBIT_ENUM) {
+            // Debit transaction, increase cash
+            user.increment("totalCash", transaction.get("amount"));
         } else {
-          totalCash = user.get("totalCash");
+            console.log("totalCash: " + user.get("totalCash"));
+            // Credit transaction, decrease cash
+            if (!user.get("totalCash")) {
+                console.log("Empty totalCash!");
+                totalCash = 0;
+            } else {
+                totalCash = user.get("totalCash");
+            }
+                totalCash = totalCash - transaction.get("amount");
+                user.set("totalCash", totalCash);
         }
-        totalCash = totalCash - transaction.get("amount");
-        user.set("totalCash", totalCash);
-      }
-      user.save(null, {
-          success: function(user) {
-            console.log("User updated successfully!");
-          },
-          error: function(user, error) {
-            console.error('Failed to update user, with error code: ' + error.message);
-          }
-        });
-    },
-    error: function(error) {
+        return user.save();
+    }, function(error) {
+        console.error('Error fetching user');
         logError(error);
-    }
-  });
-
-  if (transaction.get("goal")) {
-    queryGoal = new Parse.Query("Goal");
-    queryGoal.get(transaction.get("goal").id, {
-      success: function(goal) {
-        if (transaction.get("type") == CREDIT_ENUM) {
-            // Is a payment event
-            goal.increment("currentTotal", transaction.get("amount"));
-            goal.increment("numPaymentsMade");
-        } else {
-            // Is a cash out event
-            goal.set("paidOut", true);
-        }
-
-        goal.save();
-        console.log("Goal updated!");
-      },
-      error: function(error) {
-          logError(error);
-      }
+    }).then(function() {
+        console.log("User updated successfully!");
+    }, function(error) {
+        console.log('Error updating user');
+        logError(error);
     });
-  }
+    promises.push(queryUser);
+
+    if (transaction.get("goal")) {
+        queryGoal = new Parse.Query("Goal");
+        queryGoal.get(transaction.get("goal").id).then(function(goal) {
+            if (transaction.get("type") == CREDIT_ENUM) {
+                // Is a payment event
+                goal.increment("currentTotal", transaction.get("amount"));
+                goal.increment("numPaymentsMade");
+                goal.set('nextPaymentDate', getNextPaymentDate(goal.get('nextPaymentDate'), goal.get('paymentInterval')));
+            } else {
+                // Is a cash out event
+                goal.set("paidOut", true);
+            }
+            return goal.save();
+        }, function(error) {
+            console.log('Error fetching goal');
+            logError(error);
+        }).then(function() {
+            console.log("Goal updated!");
+        }, function(error) {
+            console.log('Error updating goal');
+            logError(error);
+        });
+        promises.push(queryGoal);
+    }
+    return Parse.Promise.when(promises);
 });
 
 /**
@@ -562,6 +600,7 @@ Parse.Cloud.define('createLendingCircle', function(request, response) {
             goal.set('parentGoal', parentGoal);
             goal.set('cashOutDate', nextPayment.toDate());
             goal.set('paidOut', false);
+            goal.set('nextPaymentDate', firstPayment.toDate());
             nextPayment = nextPayment.add('months', 1);
             //promises.push(goal.save());
             promise = promise.then(function() {
