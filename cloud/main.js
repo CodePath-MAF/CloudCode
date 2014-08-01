@@ -796,11 +796,27 @@ Parse.Cloud.define('dashboardView', function(request, response) {
         });
         return Parse.Promise.as();
     }).then(function() {
+        var query = new Parse.Query('Goal');
+        query.equalTo('user', request.user);
+        return query.find();
+    }).then(function(goals) {
+        internalResponse.goalToPrettyDueDate = {};
+        internalResponse.goals = goals;
+        internalResponse.goals = _.each(goals, function(goal) {
+            internalResponse.goalToPrettyDueDate[goal.id] = {
+                prettyDate: moment(goal.get('nextPaymentDate')).fromNow(),
+                warning: moment(goal.get('nextPaymentDate')).diff(new Date(), 'days') <= 7 ? true : false
+            };
+        });
+        return Parse.Promise.as();
+    }).then(function() {
         response.success({
             lineChart: {
                 data: internalResponse.chartData,
                 xLabels: internalResponse.xLabels
-            }
+            },
+            goals: internalResponse.goals,
+            goalToPrettyDueDate: internalResponse.goalToPrettyDueDate
         });
     });
 });
