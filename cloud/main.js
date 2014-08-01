@@ -38,6 +38,15 @@ CREDIT_ENUM = 2;
  GOAL_STATUS_IN_PROGRESS = 1;
  GOAL_STATUS_ACHIEVED = 2;
 
+ /**
+  * Payment Interval ENUM Values
+  */
+ PAYMENT_INTERVAL_DAILY = 1;
+ PAYMENT_INTERVAL_WEEKLY = 7;
+ PAYMENT_INTERVAL_BIWEEKLY = 14;
+ PAYMENT_INTERVAL_MONTHLY = 30;
+ PAYMENT_INTERVAL_BIMONTHLY = 60;
+
 logError = function(error) {
     console.error('Error: ' + JSON.stringify(error));
 };
@@ -55,6 +64,29 @@ handleError = function(error) {
  */
 daysBetween = function(startDate, endDate) {
     return Math.floor((endDate - startDate) / MILLISECONDS_PER_DAY);
+};
+
+getNextPaymentDate = function(currentPaymentDate, paymentInterval) {
+    var nextPaymentDate = moment(currentPaymentDate);
+    switch (paymentInterval) {
+        case PAYMENT_INTERVAL_DAILY:
+            nextPaymentDate = nextPaymentDate.add('days', 1);
+            break;
+        case PAYMENT_INTERVAL_WEEKLY:
+            nextPaymentDate = nextPaymentDate.add('weeks', 1);
+            break;
+        case PAYMENT_INTERVAL_BIWEEKLY:
+            nextPaymentDate = nextPaymentDate.add('weeks', 2);
+            break;
+        case PAYMENT_INTERVAL_MONTHLY:
+            nextPaymentDate = nextPaymentDate.add('months', 1);
+            break;
+        case PAYMENT_INTERVAL_BIMONTHLY:
+            nextPaymentDate = nextPaymentDate.add('months', 2);
+            break;
+    }
+    console.log('changing nextPaymentDate from: ' + currentPaymentDate + ' to: ' + nextPaymentDate.toDate());
+    return nextPaymentDate.toDate();
 };
 
 /**
@@ -82,6 +114,10 @@ Parse.Cloud.beforeSave("Goal", function(request, response) {
         goal.set("paymentAmount", paymentAmount);
         goal.set("currentTotal", 0);
 
+        if (!goal.get('nextPaymentDate')) {
+            goal.set('nextPaymentDate', getNextPaymentDate(today, goal.get('paymentInterval')));
+        }
+
         request.object = goal;
     }
     response.success();
@@ -92,62 +128,64 @@ Parse.Cloud.beforeSave("Goal", function(request, response) {
  * accordingly.
  */
 Parse.Cloud.afterSave("Transaction", function(request) {
-  transaction = request.object;
+    transaction = request.object;
 
-  queryUser = new Parse.Query(Parse.User);
-  queryUser.get(transaction.get("user").id, {
-    success: function(user) {
-      Parse.Cloud.useMasterKey();
-      if (transaction.get("type") == 1) {
-        // Debit transaction, increase cash
-        user.increment("totalCash", transaction.get("amount"));
-      } else {
-        console.log("totalCash: " + user.get("totalCash"));
-        // Credit transaction, decrease cash
-        if (!user.get("totalCash")) {
-          console.log("Empty totalCash!");
-          totalCash = 0;
+    var promises = [];
+    queryUser = new Parse.Query(Parse.User);
+    queryUser.get(transaction.get("user").id).then(function(user) {
+        Parse.Cloud.useMasterKey();
+        if (transaction.get("type") == DEBIT_ENUM) {
+            // Debit transaction, increase cash
+            user.increment("totalCash", transaction.get("amount"));
         } else {
-          totalCash = user.get("totalCash");
+            console.log("totalCash: " + user.get("totalCash"));
+            // Credit transaction, decrease cash
+            if (!user.get("totalCash")) {
+                console.log("Empty totalCash!");
+                totalCash = 0;
+            } else {
+                totalCash = user.get("totalCash");
+            }
+                totalCash = totalCash - transaction.get("amount");
+                user.set("totalCash", totalCash);
         }
-        totalCash = totalCash - transaction.get("amount");
-        user.set("totalCash", totalCash);
-      }
-      user.save(null, {
-          success: function(user) {
-            console.log("User updated successfully!");
-          },
-          error: function(user, error) {
-            console.error('Failed to update user, with error code: ' + error.message);
-          }
-        });
-    },
-    error: function(error) {
+        return user.save();
+    }, function(error) {
+        console.error('Error fetching user');
         logError(error);
-    }
-  });
-
-  if (transaction.get("goal")) {
-    queryGoal = new Parse.Query("Goal");
-    queryGoal.get(transaction.get("goal").id, {
-      success: function(goal) {
-        if (transaction.get("type") == CREDIT_ENUM) {
-            // Is a payment event
-            goal.increment("currentTotal", transaction.get("amount"));
-            goal.increment("numPaymentsMade");
-        } else {
-            // Is a cash out event
-            goal.set("paidOut", true);
-        }
-
-        goal.save();
-        console.log("Goal updated!");
-      },
-      error: function(error) {
-          logError(error);
-      }
+    }).then(function() {
+        console.log("User updated successfully!");
+    }, function(error) {
+        console.log('Error updating user');
+        logError(error);
     });
-  }
+    promises.push(queryUser);
+
+    if (transaction.get("goal")) {
+        queryGoal = new Parse.Query("Goal");
+        queryGoal.get(transaction.get("goal").id).then(function(goal) {
+            if (transaction.get("type") == CREDIT_ENUM) {
+                // Is a payment event
+                goal.increment("currentTotal", transaction.get("amount"));
+                goal.increment("numPaymentsMade");
+                goal.set('nextPaymentDate', getNextPaymentDate(goal.get('nextPaymentDate'), goal.get('paymentInterval')));
+            } else {
+                // Is a cash out event
+                goal.set("paidOut", true);
+            }
+            return goal.save();
+        }, function(error) {
+            console.log('Error fetching goal');
+            logError(error);
+        }).then(function() {
+            console.log("Goal updated!");
+        }, function(error) {
+            console.log('Error updating goal');
+            logError(error);
+        });
+        promises.push(queryGoal);
+    }
+    return Parse.Promise.when(promises);
 });
 
 /**
@@ -175,15 +213,16 @@ createUserWithId = function(userId) {
     return user;
 };
 
-getTransactions = function(user, type, internalResponse) {
+getTransactions = function(user, type, internalResponse, includeCategory) {
     internalResponse = internalResponse || {};
     if (!internalResponse.transactions) {
         var query = new Parse.Query('Transaction');
         query.equalTo('user', user);
         query.equalTo('type', type);
         query.descending('transactionDate');
-        // XXX potentially take an argument to see if we need to include the category
-        query.include('category');
+        if (includeCategory) {
+            query.include('category');
+        }
         return query.find().then(function(transactions) {
             internalResponse.transactions = transactions;
             return Parse.Promise.as(transactions);
@@ -196,6 +235,16 @@ getTransactions = function(user, type, internalResponse) {
 getCategories = function() {
     var query = new Parse.Query('Category');
     return query.find();
+};
+
+addUserToRequest = function(request) {
+    if (!request.user) {
+        if (!request.params.userId) {
+            console.error('"userId" needs to be submitted in order to attach user to the request.');
+            return;
+        }
+        request.user = createUserWithId(request.params.userId);
+    }
 };
 
 getUser = function(userId) {
@@ -244,7 +293,7 @@ getTransactionsByDate = function(user, internalResponse) {
     internalResponse = internalResponse || {};
     var promise = new Parse.Promise();
     var transactionsByDate = {};
-    getTransactions(user, 2, internalResponse).then(function(transactions) {
+    getTransactions(user, CREDIT_ENUM, internalResponse, true).then(function(transactions) {
         _.each(transactions, function(transaction) {
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
             var transactionsForDate = transactionsByDate[strippedDate] || [];
@@ -270,7 +319,7 @@ spentToday = function(today, transactions) {
     return getTotalForTransactions(transactions, function(transaction) {
         var transactionDate = moment(transaction.get('transactionDate'));
         if (
-            transaction.get('type') == 2 &&
+            transaction.get('type') == CREDIT_ENUM &&
             transactionDate.year() == today.year() &&
             transactionDate.month() == today.month() &&
             transactionDate.date() == today.date()
@@ -285,7 +334,7 @@ spentToday = function(today, transactions) {
 spentThisWeek = function(today, transactions) {
     return getTotalForTransactions(transactions, function(transaction) {
         var transactionDate = moment(transaction.get('transactionDate'));
-        if (transaction.get('type') == 2 && transactionDate.week() == today.week()) {
+        if (transaction.get('type') == CREDIT_ENUM && transactionDate.week() == today.week()) {
             return true;
         } else {
             return false;
@@ -296,8 +345,7 @@ spentThisWeek = function(today, transactions) {
 transactionsTotalByCategoryByDate = function(request, internalResponse) {
     var promise = new Parse.Promise();
     internalResponse = internalResponse || {};
-    // type 2 is credit transactions
-    getTransactions(request.user, 2, internalResponse).then(function(transactions) {
+    getTransactions(request.user, CREDIT_ENUM, internalResponse, true).then(function(transactions) {
         var transactionsTotalByCategoryByDate = {};
         _.each(transactions, function(transaction) {
             var strippedDate = getStrippedDate(transaction.get('transactionDate'));
@@ -552,6 +600,7 @@ Parse.Cloud.define('createLendingCircle', function(request, response) {
             goal.set('parentGoal', parentGoal);
             goal.set('cashOutDate', nextPayment.toDate());
             goal.set('paidOut', false);
+            goal.set('nextPaymentDate', firstPayment.toDate());
             nextPayment = nextPayment.add('months', 1);
             //promises.push(goal.save());
             promise = promise.then(function() {
@@ -586,7 +635,8 @@ Parse.Cloud.define('createLendingCircle', function(request, response) {
 Parse.Cloud.define('createPost', function(request, response) {
     var Post = Parse.Object.extend('Post');
     var post = new Post();
-    post.set('user', createUserWithId(request.params.userId));
+    addUserToRequest(request);
+    post.set('user', request.user);
     post.set('goal', createGoalWithId(request.params.goalId));
     post.set('content', request.params.content);
     post.set('type', request.params.type);
@@ -614,7 +664,8 @@ Parse.Cloud.define('createComment', function(request, response) {
     var Comment = Parse.Object.extend('Comment');
     var comment = new Comment();
     var post = createPostWithId(request.params.postId);
-    comment.set('user', createUserWithId(request.params.userId));
+    addUserToRequest(request);
+    comment.set('user', request.user);
     comment.set('post', post);
     comment.set('content', request.params.content);
     post.add('comments', comment);
@@ -641,10 +692,8 @@ Parse.Cloud.define('createComment', function(request, response) {
  */
 Parse.Cloud.define('stackedBarChart', function(request, response) {
     var internalResponse = {};
-    getUser(request.params.userId).then(function(user) {
-        request.user = user;
-        return stackedBarChart(request, internalResponse);
-    }).then(function() {
+    addUserToRequest(request);
+    stackedBarChart(request, internalResponse).then(function() {
         response.success(internalResponse.stackedBarChart);
     });
 });
@@ -656,12 +705,8 @@ Parse.Cloud.define('stackedBarChart', function(request, response) {
  * @return response.success or response.error
  */
 Parse.Cloud.define("recordPayment", function(request, response) {
-    var user = null;
-
-    getUser(request.params.userId).then(function(u) {
-        user = u;
-        return getGoal(request.params.goalId);
-    }).then(function(goal) {
+    addUserToRequest(request);
+    getGoal(request.params.goalId).then(function(goal) {
         var Transaction = Parse.Object.extend("Transaction");
         var transaction = new Transaction();
 
@@ -670,7 +715,7 @@ Parse.Cloud.define("recordPayment", function(request, response) {
         var category = new Category();
         category.id = BILLS_CATEGORY_ID;
 
-        transaction.set("user", user);
+        transaction.set("user", request.user);
         transaction.set("amount", goal.get("paymentAmount"));
         transaction.set("name", "Lending circle Payment");
         transaction.set("goal", goal);
@@ -694,12 +739,8 @@ Parse.Cloud.define("recordPayment", function(request, response) {
  * @return response.success or response.error
  */
 Parse.Cloud.define("recordCashOut", function(request, response) {
-    var user = null;
-
-    getUser(request.params.userId).then(function(u) {
-        user = u;
-        return getGoal(request.params.goalId);
-    }).then(function(goal) {
+    addUserToRequest(request);
+    getGoal(request.params.goalId).then(function(goal) {
         if (!goal.get("paidOut")) {
             var Transaction = Parse.Object.extend("Transaction");
             var transaction = new Transaction();
@@ -709,7 +750,7 @@ Parse.Cloud.define("recordCashOut", function(request, response) {
             var category = new Category();
             category.id = BILLS_CATEGORY_ID;
 
-            transaction.set("user", user);
+            transaction.set("user", request.user);
             transaction.set("amount", goal.get("amount"));
             transaction.set("name", "Lending circle Cash Out");
             transaction.set("goal", goal);
@@ -726,5 +767,40 @@ Parse.Cloud.define("recordCashOut", function(request, response) {
     }, function(error) {
         // The save failed
         response.error("Oops! error recording a cash out. " + error);
+    });
+});
+
+/**
+ * Fetch the data for the main dashboard view
+ * @param {string} request.params.userId
+ */
+Parse.Cloud.define('dashboardView', function(request, response) {
+    var internalResponse = {};
+    addUserToRequest(request);
+    getTransactions(request.user, CREDIT_ENUM, internalResponse).then(function(transactions) {
+        internalResponse.xLabels = [];
+        internalResponse.chartData = [];
+        internalResponse.transactionsTotalByWeek = {};
+        _.each(transactions, function(transaction) {
+            var week = moment(transaction.get('transactionDate')).endOf('week').format('MMM D');
+            if (_.indexOf(internalResponse.xLabels, week) === -1) {
+                // want the later dates to be at the end of the list
+                internalResponse.xLabels.unshift(week);
+            }
+            totalByWeek = internalResponse.transactionsTotalByWeek[week] || 0;
+            totalByWeek += transaction.get('amount');
+            internalResponse.transactionsTotalByWeek[week] = totalByWeek;
+        });
+        _.each(internalResponse.xLabels, function(week) {
+            internalResponse.chartData.push(internalResponse.transactionsTotalByWeek[week]);
+        });
+        return Parse.Promise.as();
+    }).then(function() {
+        response.success({
+            lineChart: {
+                data: internalResponse.chartData,
+                xLabels: internalResponse.xLabels
+            }
+        });
     });
 });
