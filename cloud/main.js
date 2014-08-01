@@ -730,3 +730,38 @@ Parse.Cloud.define("recordCashOut", function(request, response) {
         response.error("Oops! error recording a cash out. " + error);
     });
 });
+
+/**
+ * Fetch the data for the main dashboard view
+ * @param {string} request.params.userId
+ */
+Parse.Cloud.define('dashboardView', function(request, response) {
+    var internalResponse = {};
+    addUserToRequest(request);
+    getTransactions(request.user, CREDIT_ENUM, internalResponse).then(function(transactions) {
+        internalResponse.xLabels = [];
+        internalResponse.chartData = [];
+        internalResponse.transactionsTotalByWeek = {};
+        _.each(transactions, function(transaction) {
+            var week = moment(transaction.get('transactionDate')).endOf('week').format('MMM D');
+            if (_.indexOf(internalResponse.xLabels, week) === -1) {
+                // want the later dates to be at the end of the list
+                internalResponse.xLabels.unshift(week);
+            }
+            totalByWeek = internalResponse.transactionsTotalByWeek[week] || 0;
+            totalByWeek += transaction.get('amount');
+            internalResponse.transactionsTotalByWeek[week] = totalByWeek;
+        });
+        _.each(internalResponse.xLabels, function(week) {
+            internalResponse.chartData.push(internalResponse.transactionsTotalByWeek[week]);
+        });
+        return Parse.Promise.as();
+    }).then(function() {
+        response.success({
+            lineChart: {
+                data: internalResponse.chartData,
+                xLabels: internalResponse.xLabels
+            }
+        });
+    });
+});
