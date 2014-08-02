@@ -247,6 +247,18 @@ addUserToRequest = function(request) {
     }
 };
 
+addUserToRequestFetch = function(request) {
+    var promise = new Parse.Promise();
+    addUserToRequest(request);
+    getUser(request.user.id).then(function(user) {
+        request.user = user;
+        promise.resolve(user);
+    }, function(error) {
+        promise.reject(error);
+    });
+    return promise;
+};
+
 getUser = function(userId) {
     var promise = new Parse.Promise();
     var query = new Parse.Query('User');
@@ -776,25 +788,26 @@ Parse.Cloud.define("recordCashOut", function(request, response) {
  */
 Parse.Cloud.define('dashboardView', function(request, response) {
     var internalResponse = {};
-    addUserToRequest(request);
-    getTransactions(request.user, CREDIT_ENUM, internalResponse).then(function(transactions) {
-        internalResponse.xLabels = [];
-        internalResponse.chartData = [];
-        internalResponse.transactionsTotalByWeek = {};
-        _.each(transactions, function(transaction) {
-            var week = moment(transaction.get('transactionDate')).endOf('week').format('MMM D');
-            if (_.indexOf(internalResponse.xLabels, week) === -1) {
-                // want the later dates to be at the end of the list
-                internalResponse.xLabels.unshift(week);
-            }
-            totalByWeek = internalResponse.transactionsTotalByWeek[week] || 0;
-            totalByWeek += transaction.get('amount');
-            internalResponse.transactionsTotalByWeek[week] = totalByWeek;
+    addUserToRequestFetch(request).then(function() {
+        return getTransactions(request.user, CREDIT_ENUM, internalResponse).then(function(transactions) {
+            internalResponse.xLabels = [];
+            internalResponse.chartData = [];
+            internalResponse.transactionsTotalByWeek = {};
+            _.each(transactions, function(transaction) {
+                var week = moment(transaction.get('transactionDate')).endOf('week').format('MMM D');
+                if (_.indexOf(internalResponse.xLabels, week) === -1) {
+                    // want the later dates to be at the end of the list
+                    internalResponse.xLabels.unshift(week);
+                }
+                totalByWeek = internalResponse.transactionsTotalByWeek[week] || 0;
+                totalByWeek += transaction.get('amount');
+                internalResponse.transactionsTotalByWeek[week] = totalByWeek;
+            });
+            _.each(internalResponse.xLabels, function(week) {
+                internalResponse.chartData.push(internalResponse.transactionsTotalByWeek[week]);
+            });
+            return Parse.Promise.as();
         });
-        _.each(internalResponse.xLabels, function(week) {
-            internalResponse.chartData.push(internalResponse.transactionsTotalByWeek[week]);
-        });
-        return Parse.Promise.as();
     }).then(function() {
         var query = new Parse.Query('Goal');
         query.equalTo('user', request.user);
@@ -816,7 +829,8 @@ Parse.Cloud.define('dashboardView', function(request, response) {
                 xLabels: internalResponse.xLabels
             },
             goals: internalResponse.goals,
-            goalToPrettyDueDate: internalResponse.goalToPrettyDueDate
+            goalToPrettyDueDate: internalResponse.goalToPrettyDueDate,
+            totalCash: request.user.get('totalCash')
         });
     });
 });
