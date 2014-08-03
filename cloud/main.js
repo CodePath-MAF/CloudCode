@@ -659,6 +659,16 @@ Parse.Cloud.define('createPost', function(request, response) {
         post.set('toUser', request.params.toUserId);
     }
     post.save().then(function(post) {
+        // On successful post, broadcast a notification to the lending circle
+        console.log("Sending a push notification to the lending circle group.");
+
+        var params = {
+            parentGoalId: request.params.goalId,
+            message: request.user.get("name") + " just sent a message!"
+        };
+
+        Parse.Cloud.run('notifyLendingCircleGroup', params);
+
         response.success({
             success: true,
             post: post,
