@@ -882,3 +882,38 @@ Parse.Cloud.define('dashboardView', function(request, response) {
         });
     });
 });
+
+/**
+ * Broadcast a message to all users participating on the Lending Circle
+ *
+ * @param {string} parentGoalId Parent Goal ID to broadcast message to
+ * @param {string} message Message to broadcast
+ */
+Parse.Cloud.define('notifyLendingCircleGroup', function(request, response) {
+    // get all users participating on the goal
+    var queryGoal = new Parse.Query('Goal');
+    queryGoal.include("users");
+    queryGoal.get(request.params.parentGoalId).then(function(goal) {
+        return goal.get("users");
+    }).then(function(users) {
+        console.log("users: " + users)
+        // query all app installations containing those users id
+        var query = new Parse.Query(Parse.Installation);
+        query.containedIn('user', users);
+
+        // send out the message with push.send
+        console.log("Trying to send a push notification...");
+        return Parse.Push.send({
+                  where: query, // Set our Installation query
+                  data: {
+                    alert: request.params.message
+                  }
+                });
+    }).then(function() {
+        // push notification succeed
+        response.success();
+    }, function(error) {
+        // push notifications failed
+        response.error("Oops! error sending push notifications. e: " + error);
+    });
+});
