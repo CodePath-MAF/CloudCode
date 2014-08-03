@@ -188,6 +188,27 @@ Parse.Cloud.afterSave("Transaction", function(request) {
     return Parse.Promise.when(promises);
 });
 
+
+/**
+ * Method to run after saving the Post. will trigger notification to the
+ * Lending circle group.
+ */
+Parse.Cloud.afterSave("Post", function(request) {
+    // On successful post, broadcast a notification to the lending circle
+    post = request.object;
+
+    if (!post.existed()) {
+        console.log("Sending a push notification to the lending circle group after comments.");
+
+        var params = {
+            parentGoalId: post.get("goal").id,
+            message: request.user.get("name") + " just replied to a post!"
+        };
+
+        Parse.Cloud.run('notifyLendingCircleGroup', params);
+    }
+});
+
 /**
  * General Helpers
  */
@@ -659,16 +680,6 @@ Parse.Cloud.define('createPost', function(request, response) {
         post.set('toUser', request.params.toUserId);
     }
     post.save().then(function(post) {
-        // On successful post, broadcast a notification to the lending circle
-        console.log("Sending a push notification to the lending circle group.");
-
-        var params = {
-            parentGoalId: request.params.goalId,
-            message: request.user.get("name") + " just sent a message!"
-        };
-
-        Parse.Cloud.run('notifyLendingCircleGroup', params);
-
         response.success({
             success: true,
             post: post,
@@ -695,6 +706,16 @@ Parse.Cloud.define('createComment', function(request, response) {
     comment.set('content', request.params.content);
     post.add('comments', comment);
     post.save().then(function(post) {
+        // On successful post, broadcast a notification to the lending circle
+        console.log("Sending a push notification to the lending circle group after comments.");
+
+        var params = {
+            parentGoalId: post.get("goal"),
+            message: request.user.get("name") + " just replied to a post!"
+        };
+
+        Parse.Cloud.run('notifyLendingCircleGroup', params);
+
         response.success({
             success: true,
             comment: post,
