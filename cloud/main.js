@@ -739,7 +739,27 @@ Parse.Cloud.define("recordPayment", function(request, response) {
         transaction.set("category", category);
         return transaction.save();
     }).then(function(transaction) {
-        // the save succeed
+        // the save succeed send a push notification to the user
+        var query = new Parse.Query(Parse.Installation);
+        query.equalTo('user', request.user);
+
+        console.log("Trying to send a push notification...");
+        Parse.Push.send({
+          where: query, // Set our Installation query
+          data: {
+            alert: "Payment received."
+          }
+        }, {
+          success: function() {
+            // Push was successful
+            console.log("Push notification sent!");
+          },
+          error: function(error) {
+            // Handle error
+            console.error("Push notification failed");
+            logError(error);
+          }
+        });
         response.success();
     }, function(error) {
         // The save failed
