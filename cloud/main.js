@@ -188,6 +188,27 @@ Parse.Cloud.afterSave("Transaction", function(request) {
     return Parse.Promise.when(promises);
 });
 
+
+/**
+ * Method to run after saving the Post. will trigger notification to the
+ * Lending circle group.
+ */
+Parse.Cloud.afterSave("Post", function(request) {
+    // On successful post, broadcast a notification to the lending circle
+    post = request.object;
+
+    if (!post.existed()) {
+        console.log("Sending a push notification to the lending circle group after comments.");
+
+        var params = {
+            parentGoalId: post.get("goal").id,
+            message: request.user.get("name") + " just replied to a post!"
+        };
+
+        Parse.Cloud.run('notifyLendingCircleGroup', params);
+    }
+});
+
 /**
  * General Helpers
  */
@@ -685,6 +706,16 @@ Parse.Cloud.define('createComment', function(request, response) {
     comment.set('content', request.params.content);
     post.add('comments', comment);
     post.save().then(function(post) {
+        // On successful post, broadcast a notification to the lending circle
+        console.log("Sending a push notification to the lending circle group after comments.");
+
+        var params = {
+            parentGoalId: post.get("goal"),
+            message: request.user.get("name") + " just replied to a post!"
+        };
+
+        Parse.Cloud.run('notifyLendingCircleGroup', params);
+
         response.success({
             success: true,
             comment: post,
@@ -739,7 +770,29 @@ Parse.Cloud.define("recordPayment", function(request, response) {
         transaction.set("category", category);
         return transaction.save();
     }).then(function(transaction) {
-        // the save succeed
+        // the save succeed, lets send a push notification to the user
+        var query = new Parse.Query(Parse.Installation);
+        query.equalTo('user', request.user);
+
+        console.log("Trying to send a push notification...");
+        Parse.Push.send({
+          where: query, // Set our Installation query
+          data: {
+            alert: "Payment received."
+          }
+        }, {
+          success: function() {
+            // Push was successful
+            console.log("Push notification sent!");
+          },
+          error: function(error) {
+            // Handle error
+            console.error("Push notification failed");
+            logError(error);
+          }
+        });
+
+        // Response will be sent regardless push outcome
         response.success();
     }, function(error) {
         // The save failed
@@ -777,7 +830,30 @@ Parse.Cloud.define("recordCashOut", function(request, response) {
             return Parse.Promise.error("the goal for the user had already being cashed out.");
         }
     }).then(function(transaction) {
-        // the save succeed
+        // the save succeed, lets send a push notification to the user
+
+        var query = new Parse.Query(Parse.Installation);
+        query.equalTo('user', request.user);
+
+        console.log("Trying to send a push notification...");
+        Parse.Push.send({
+          where: query, // Set our Installation query
+          data: {
+            alert: "Lending Circle loan successfully added to your account"
+          }
+        }, {
+          success: function() {
+            // Push was successful
+            console.log("Push notification sent!");
+          },
+          error: function(error) {
+            // Handle error
+            console.error("Push notification failed");
+            logError(error);
+          }
+        });
+
+        // Response will be sent regardless push outcome
         response.success();
     }, function(error) {
         // The save failed
@@ -835,5 +911,40 @@ Parse.Cloud.define('dashboardView', function(request, response) {
             goalToPrettyDueDate: internalResponse.goalToPrettyDueDate,
             totalCash: request.user.get('totalCash')
         });
+    });
+});
+
+/**
+ * Broadcast a message to all users participating on the Lending Circle
+ *
+ * @param {string} parentGoalId Parent Goal ID to broadcast message to
+ * @param {string} message Message to broadcast
+ */
+Parse.Cloud.define('notifyLendingCircleGroup', function(request, response) {
+    // get all users participating on the goal
+    var queryGoal = new Parse.Query('Goal');
+    queryGoal.include("users");
+    queryGoal.get(request.params.parentGoalId).then(function(goal) {
+        return goal.get("users");
+    }).then(function(users) {
+        console.log("users: " + users)
+        // query all app installations containing those users id
+        var query = new Parse.Query(Parse.Installation);
+        query.containedIn('user', users);
+
+        // send out the message with push.send
+        console.log("Trying to send a push notification...");
+        return Parse.Push.send({
+                  where: query, // Set our Installation query
+                  data: {
+                    alert: request.params.message
+                  }
+                });
+    }).then(function() {
+        // push notification succeed
+        response.success();
+    }, function(error) {
+        // push notifications failed
+        response.error("Oops! error sending push notifications. e: " + error);
     });
 });
