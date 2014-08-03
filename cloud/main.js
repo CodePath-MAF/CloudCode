@@ -442,6 +442,8 @@ getPostsForGoal = function(goalId, internalResponse) {
     query.equalTo('goal', createGoalWithId(goalId));
     query.descending('createdAt');
     query.include('comments');
+    query.include('comments.user');
+    query.include('user');
     return query.find().then(function(posts) {
         internalResponse.posts = posts;
         return Parse.Promise.as();
