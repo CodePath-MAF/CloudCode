@@ -467,7 +467,7 @@ getParentGoalDetailView = function(request, internalResponse) {
             cashOutSchedule = [];
         _.each(results, function(goal) {
             // XXX alternatively this could be goalId
-            if (goal.get('user').id == request.params.userId) {
+            if (goal.get('user').id == request.user.id) {
                 userGoal = goal;
             }
             cashOutSchedule.push({
@@ -539,6 +539,7 @@ createParentGoal = function(request, internalResponse) {
  */
 Parse.Cloud.define('goalDetailView', function(request, response) {
     var internalResponse = {};
+    addUserToRequest(request);
     if (request.params.parentGoalId) {
         goalDetails = getParentGoalDetailView(request, internalResponse);
     } else {
