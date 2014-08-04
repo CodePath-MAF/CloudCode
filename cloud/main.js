@@ -204,7 +204,8 @@ Parse.Cloud.afterSave("Post", function(request) {
 
         var params = {
             parentGoalId: post.get("goal").id,
-            message: request.user.get("name") + " just posted in the lending circle!"
+            message: request.user.get("name") + " just posted in the lending circle!",
+            currentUserId: post.get('user').id
         };
 
         Parse.Cloud.run('notifyLendingCircleGroup', params);
@@ -226,7 +227,8 @@ Parse.Cloud.afterSave('Comment', function(request) {
             console.log("Sending a push notification to the lending circle group after comments.");
             var params = {
                 parentGoalId: posts[0].get("goal").id,
-                message: request.user.get("name") + " just replied to a post!"
+                message: request.user.get("name") + " just replied to a post!",
+                currentUserId: post.get('user').id
             };
             Parse.Cloud.run('notifyLendingCircleGroup', params);
         }, function(error) {
@@ -952,7 +954,12 @@ Parse.Cloud.define('notifyLendingCircleGroup', function(request, response) {
     queryGoal.get(request.params.parentGoalId).then(function(goal) {
         return goal.get("users");
     }).then(function(users) {
-        console.log("users: " + users)
+        // filter out current user
+        console.log('before users: ' + users.length);
+        users = _.filter(users, function(user) {
+            return user.id !== request.params.currentUserId;
+        });
+        console.log("after users: " + users.length);
         // query all app installations containing those users id
         var query = new Parse.Query(Parse.Installation);
         query.containedIn('user', users);
