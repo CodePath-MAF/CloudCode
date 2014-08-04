@@ -196,16 +196,42 @@ Parse.Cloud.afterSave("Transaction", function(request) {
 Parse.Cloud.afterSave("Post", function(request) {
     // On successful post, broadcast a notification to the lending circle
     post = request.object;
+    console.log('after save for post: ', JSON.stringify(post));
 
     if (!post.existed()) {
         console.log("Sending a push notification to the lending circle group after comments.");
 
         var params = {
             parentGoalId: post.get("goal").id,
-            message: request.user.get("name") + " just replied to a post!"
+            message: request.user.get("name") + " just posted in the lending circle!"
         };
 
         Parse.Cloud.run('notifyLendingCircleGroup', params);
+    }
+});
+
+/**
+ * Method to run after saving a Comment. Will trigger notification to the
+ * Lending circle group.
+ */
+Parse.Cloud.afterSave('Comment', function(request) {
+    comment = request.object;
+
+    if (!comment.existed()) {
+        var query = new Parse.Query('Post');
+        query.equalTo('objectId', comment.get('post').id);
+        query.find(function(posts) {
+            // On successful post, broadcast a notification to the lending circle
+            console.log("Sending a push notification to the lending circle group after comments.");
+            var params = {
+                parentGoalId: posts[0].get("goal").id,
+                message: request.user.get("name") + " just replied to a post!"
+            };
+            Parse.Cloud.run('notifyLendingCircleGroup', params);
+        }, function(error) {
+            logError(error);
+        });
+        return query;
     }
 });
 
@@ -495,7 +521,8 @@ getParentGoalDetailView = function(request, internalResponse) {
             }
             cashOutSchedule.push({
                 userId: goal.get('user').id,
-                paidOut: goal.get('paidOut')
+                paidOut: goal.get('paidOut'),
+                profileImageId: goal.get('user').profileImageId
             });
         });
         internalResponse.cashOutSchedule = cashOutSchedule;
@@ -618,14 +645,15 @@ Parse.Cloud.define('stackedBarChartDetailView', function(request, response) {
 Parse.Cloud.define('createLendingCircle', function(request, response) {
     var internalResponse = {};
     var firstPayment = moment([request.params.year, request.params.month - 1, request.params.day]);
-    var nextPayment = firstPayment;
+    var goalDate = moment([request.params.year, request.params.month -1, request.params.day]).add('months', request.params.users.length).toDate();
     createParentGoal(request, internalResponse).then(function(parentGoal) {
         internalResponse.parentGoal = parentGoal;
-        var promise = Parse.Promise.as();
-        //var promises = [];
+        var goals = [];
         var Goal = Parse.Object.extend('Goal');
+        var nextCashOutIncrement = 0;
         _.each(request.params.users, function(userId) {
             var goal = new Goal();
+            var nextCashOut = moment([request.params.year, request.params.month - 1, 20]).add('months', nextCashOutIncrement);
             goal.set('user', createUserWithId(userId));
             goal.set('name', parentGoal.get('name'));
             goal.set('type', parentGoal.get('type'));
@@ -633,22 +661,18 @@ Parse.Cloud.define('createLendingCircle', function(request, response) {
             goal.set('amount', parentGoal.get('amount'));
             goal.set('paymentAmount', parentGoal.get('paymentAmount'));
             goal.set('numPayments', parentGoal.get('numPayments'));
+            goal.set('numPaymentsMade', 0);
+            goal.set('currentTotal', 0);
             goal.set('parentGoal', parentGoal);
-            goal.set('cashOutDate', nextPayment.toDate());
+            goal.set('cashOutDate', nextCashOut.toDate());
             goal.set('paidOut', false);
             goal.set('nextPaymentDate', firstPayment.toDate());
-            nextPayment = nextPayment.add('months', 1);
-            //promises.push(goal.save());
-            promise = promise.then(function() {
-                return goal.save();
-            });
+            goal.set('paymentInterval', PAYMENT_INTERVAL_MONTHLY);
+            goal.set('goalDate', goalDate);
+            goals.push(goal);
+            nextCashOutIncrement += 1;
         });
-        // XXX for some reason it isn't working when we run this in parallel
-        // (https://parse.com/docs/js_guide#promises-parallel) get this error:
-        // {"code":141,"error":"Uncaught Tried to save an object with a pointer
-        // to a new, unsaved object."}
-        //return Parse.Promise.when(promises);
-        return promise;
+        return Parse.Object.saveAll(goals);
     }).then(function(goals) {
         response.success({
             parentGoal: internalResponse.parentGoal,
@@ -706,16 +730,6 @@ Parse.Cloud.define('createComment', function(request, response) {
     comment.set('content', request.params.content);
     post.add('comments', comment);
     post.save().then(function(post) {
-        // On successful post, broadcast a notification to the lending circle
-        console.log("Sending a push notification to the lending circle group after comments.");
-
-        var params = {
-            parentGoalId: post.get("goal"),
-            message: request.user.get("name") + " just replied to a post!"
-        };
-
-        Parse.Cloud.run('notifyLendingCircleGroup', params);
-
         response.success({
             success: true,
             comment: post,
