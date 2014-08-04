@@ -914,6 +914,7 @@ Parse.Cloud.define('dashboardView', function(request, response) {
     }).then(function() {
         var query = new Parse.Query('Goal');
         query.equalTo('user', request.user);
+        query.ascending('type');
         return query.find();
     }).then(function(goals) {
         internalResponse.goalToPrettyDueDate = {};
