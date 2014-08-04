@@ -559,6 +559,7 @@ getGoalDetailView = function(request, internalResponse) {
         return getPostsForGoal(request.params.goalId, internalResponse);
     }).then(function() {
         internalResponse.goalDetails = {
+            nextPaymentDue: moment(internalResponse.userGoal.get('nextPaymentDate')).fromNow(),
             isLendingCircle: false
         };
         return Parse.Promise.as();
