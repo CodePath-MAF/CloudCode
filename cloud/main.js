@@ -502,13 +502,13 @@ getParentGoalDetailView = function(request, internalResponse) {
     // fetch the parent goal
     var query = new Parse.Query('Goal');
     query.equalTo('objectId', request.params.parentGoalId);
-    query.include('user');
     return query.find().then(function(results) {
         // fetch the child goals
         var parentGoal = results[0];
         internalResponse.parentGoal = parentGoal;
         var childQuery = new Parse.Query('Goal');
         childQuery.equalTo('parentGoal', parentGoal);
+        childQuery.include('user');
         childQuery.ascending('cashOutDate');
         return childQuery.find();
     }).then(function(results) {
