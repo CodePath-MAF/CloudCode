@@ -522,7 +522,7 @@ getParentGoalDetailView = function(request, internalResponse) {
             cashOutSchedule.push({
                 userId: goal.get('user').id,
                 paidOut: goal.get('paidOut'),
-                profileImageId: goal.get('user').profileImageId
+                profileImageId: goal.get('user').get('profileImageId')
             });
         });
         internalResponse.cashOutSchedule = cashOutSchedule;
