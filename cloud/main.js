@@ -502,6 +502,7 @@ getParentGoalDetailView = function(request, internalResponse) {
     // fetch the parent goal
     var query = new Parse.Query('Goal');
     query.equalTo('objectId', request.params.parentGoalId);
+    query.include('user');
     return query.find().then(function(results) {
         // fetch the child goals
         var parentGoal = results[0];
