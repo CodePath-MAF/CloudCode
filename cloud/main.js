@@ -113,6 +113,7 @@ Parse.Cloud.beforeSave("Goal", function(request, response) {
         goal.set("numPayments", numPayments);
         goal.set("paymentAmount", paymentAmount);
         goal.set("currentTotal", 0);
+        goal.set('numPaymentsMade', 0);
 
         if (!goal.get('nextPaymentDate')) {
             goal.set('nextPaymentDate', getNextPaymentDate(today, goal.get('paymentInterval')));
@@ -514,11 +515,16 @@ getParentGoalDetailView = function(request, internalResponse) {
     }).then(function(results) {
         // collect child goal data
         var userGoal,
-            cashOutSchedule = [];
+            cashOutSchedule = [],
+            currentCashOutUserName = '';
+
         _.each(results, function(goal) {
             // XXX alternatively this could be goalId
             if (goal.get('user').id == request.user.id) {
                 userGoal = goal;
+            }
+            if (currentCashOutUserName === '' && !goal.get('paidOut')) {
+                currentCashOutUserName = goal.get('user').get('name');
             }
             cashOutSchedule.push({
                 userId: goal.get('user').id,
@@ -528,11 +534,13 @@ getParentGoalDetailView = function(request, internalResponse) {
         });
         internalResponse.cashOutSchedule = cashOutSchedule;
         internalResponse.userGoal = userGoal;
+        internalResponse.currentCashOutUserName = currentCashOutUserName;
         return Parse.Promise.as();
     }).then(function() {
         return getPostsForGoal(request.params.parentGoalId, internalResponse);
     }).then(function() {
         internalResponse.goalDetails = {
+            currentCashOutUserName: internalResponse.currentCashOutUserName,
             cashOutSchedule: internalResponse.cashOutSchedule,
             isLendingCircle: true
         };
